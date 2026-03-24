@@ -1,0 +1,378 @@
+# recordatorios.py
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+import sqlite3, threading, time, datetime as dt, re, webbrowser
+from urllib.parse import quote
+
+bp = Blueprint("recordatorios", __name__, url_prefix="/recordatorios")
+
+DB_PATH = "veterinaria.db"   # mismo nombre que tu app
+CLINICA = "MARGAY"           # opcional: igual a tu CLINIC_NAME
+WHATSAPP_RETURN_ENDPOINT = "agenda_lista"  # igual a tu CLINIC_WHATSAPP_RETURN
+
+# -------------------- Helpers DB --------------------
+def db_conn():
+    # Conexión segura para threads
+    return sqlite3.connect(DB_PATH, check_same_thread=False, isolation_level=None)
+
+def dict_row(conn):
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_tables():
+    conn = dict_row(db_conn())
+    cur = conn.cursor()
+    # Config general (una fila)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS reminder_config (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        mensual_enabled INTEGER DEFAULT 0,
+        mensual_template TEXT,
+        mensual_hora TEXT DEFAULT '10:00',
+        mensual_dia_mes INTEGER DEFAULT 1,
+
+        vacunas_enabled INTEGER DEFAULT 0,
+        vacunas_template TEXT,
+        vacunas_hora TEXT DEFAULT '10:00',
+        vacunas_dias_antes INTEGER DEFAULT 7,
+
+        part_enabled INTEGER DEFAULT 0,
+        part_template TEXT,
+        part_hora TEXT DEFAULT '10:00',
+        part_dia_mes INTEGER DEFAULT 5
+    )
+    """)
+    cur.execute("INSERT OR IGNORE INTO reminder_config(id) VALUES(1)")
+
+    # Cola de envíos
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS reminder_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tipo TEXT NOT NULL,                      -- 'mensual','vacuna','particular'
+        cliente_id INTEGER,
+        animal_id INTEGER,
+        vacuna_id INTEGER,
+        telefono TEXT,
+        mensaje TEXT NOT NULL,
+        programado_en TEXT NOT NULL,             -- 'YYYY-MM-DD HH:MM'
+        enviado_en TEXT,                         -- NULL si pendiente
+        estado TEXT DEFAULT 'pendiente',         -- pendiente | enviado | cancelado | error
+        intentos INTEGER DEFAULT 0
+    )
+    """)
+    # Evitar duplicados obvios el mismo día
+    cur.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_queue_unique
+    ON reminder_queue(tipo, cliente_id, date(programado_en))
+    """)
+    conn.commit(); conn.close()
+
+init_tables()
+
+# -------------------- Utilidades --------------------
+def _uy_to_digits(phone_raw: str) -> str | None:
+    if not phone_raw: return None
+    digits = re.sub(r"\D", "", phone_raw)
+    if not digits: return None
+    if digits.startswith("598"): return digits
+    if digits.startswith("0"):   return "598" + digits.lstrip("0")
+    if len(digits) >= 8:         return "598" + digits
+    return None
+
+def _wa_url(phone_digits: str, text: str) -> str:
+    return f"https://wa.me/{phone_digits}?text={quote(text)}"
+
+def _hoy():
+    tz_now = dt.datetime.now()
+    return tz_now
+
+def _str2time(hhmm: str) -> dt.time | None:
+    try:
+        h, m = hhmm.split(":")
+        return dt.time(int(h), int(m))
+    except Exception:
+        return None
+
+# -------------------- Scheduler (hilo background) --------------------
+_stop_flag = False
+
+def _scheduler_loop():
+    while not _stop_flag:
+        try:
+            _auto_generate_tasks_if_needed()
+            _send_due()
+        except Exception as e:
+            # Evitamos romper el hilo
+            pass
+        time.sleep(30)  # chequeo cada 30s
+
+def start_scheduler():
+    t = threading.Thread(target=_scheduler_loop, daemon=True)
+    t.start()
+
+# Arranca el scheduler apenas se importa el blueprint
+start_scheduler()
+
+# -------------------- Lógica de generación automática --------------------
+def _get_cfg():
+    conn = dict_row(db_conn())
+    row = conn.execute("SELECT * FROM reminder_config WHERE id=1").fetchone()
+    conn.close()
+    return row
+
+def _dt_from_date_and_hhmm(date_: dt.date, hhmm: str) -> dt.datetime:
+    tt = _str2time(hhmm) or dt.time(10, 0)
+    return dt.datetime.combine(date_, tt)
+
+def _auto_generate_tasks_if_needed():
+    cfg = _get_cfg()
+    if not cfg: return
+    today = _hoy().date()
+
+    if cfg["mensual_enabled"]:
+        _gen_mensual_auto(today, cfg)
+
+    if cfg["vacunas_enabled"]:
+        _gen_vacunas_auto(today, cfg)
+
+    if cfg["part_enabled"]:
+        _gen_part_auto(today, cfg)
+
+def _gen_mensual_auto(today: dt.date, cfg):
+    if today.day != (cfg["mensual_dia_mes"] or 1):
+        return
+    hhmm = cfg["mensual_hora"] or "10:00"
+    programado = _dt_from_date_and_hhmm(today, hhmm).strftime("%Y-%m-%d %H:%M")
+
+    conn = dict_row(db_conn())
+    cur = conn.cursor()
+    # Clientes mensuales activos
+    rows = cur.execute("""
+        SELECT id, nombre, telefono
+        FROM clientes
+        WHERE tipo='Mensual' AND COALESCE(activo,1)=1
+    """).fetchall()
+
+    tpl = (cfg["mensual_template"] or
+           "Hola {CLIENTE}, te escribe " + CLINICA +
+           " 🐾. Recordatorio de tu mensualidad de {MES}/{ANIO}. ¡Gracias!")
+    mes = today.month; anio = today.year
+
+    for r in rows:
+        phone = _uy_to_digits(r["telefono"])
+        if not phone: continue
+        msg = tpl.format(CLIENTE=r["nombre"], MES=f"{mes:02d}", ANIO=f"{anio}")
+        try:
+            cur.execute("""
+                INSERT OR IGNORE INTO reminder_queue
+                (tipo, cliente_id, telefono, mensaje, programado_en)
+                VALUES ('mensual', ?, ?, ?, ?)
+            """, (r["id"], phone, msg, programado))
+        except Exception:
+            pass
+    conn.commit(); conn.close()
+
+def _gen_vacunas_auto(today: dt.date, cfg):
+    anticip = int(cfg["vacunas_dias_antes"] or 7)
+    objetivo = today + dt.timedelta(days=anticip)
+    hhmm = cfg["vacunas_hora"] or "10:00"
+    programado = _dt_from_date_and_hhmm(today, hhmm).strftime("%Y-%m-%d %H:%M")
+
+    conn = dict_row(db_conn())
+    cur = conn.cursor()
+    # Animales con vacuna que vence en = objetivo
+    vacs = cur.execute("""
+        SELECT v.id AS vacuna_id, v.fecha_vencimiento,
+               a.id AS animal_id, a.nombre AS animal_nombre,
+               c.id AS cliente_id, c.nombre AS cliente_nombre, c.telefono
+        FROM vacunas v
+        JOIN animales a ON a.id=v.animal_id
+        JOIN clientes c ON c.id=a.cliente_id
+        WHERE date(v.fecha_vencimiento)=date(?)
+    """, (objetivo.isoformat(),)).fetchall()
+
+    # Agrupo por cliente para mandar un sólo mensaje
+    por_cliente = {}
+    for r in vacs:
+        por_cliente.setdefault((r["cliente_id"], r["cliente_nombre"], r["telefono"]), []).append(
+            (r["animal_nombre"], r["fecha_vencimiento"])
+        )
+
+    tpl = (cfg["vacunas_template"] or
+           "Hola {CLIENTE}, te escribe " + CLINICA + " 🐾.\n"
+           "Recordatorio: {LISTADO}\n"
+           "Respondé este WhatsApp y coordinamos la aplicación. ¡Gracias!")
+
+    for (cid, cname, tel), items in por_cliente.items():
+        phone = _uy_to_digits(tel)
+        if not phone: continue
+        listado = "\n".join([f"• {nom}: vence {dt.datetime.strptime(fv,'%Y-%m-%d').strftime('%d/%m/%Y')}" for nom, fv in items])
+        msg = tpl.replace("{CLIENTE}", cname).replace("{LISTADO}", listado)
+        try:
+            cur.execute("""
+                INSERT OR IGNORE INTO reminder_queue
+                (tipo, cliente_id, telefono, mensaje, programado_en)
+                VALUES ('vacuna', ?, ?, ?, ?)
+            """, (cid, phone, msg, programado))
+        except Exception:
+            pass
+    conn.commit(); conn.close()
+
+def _gen_part_auto(today: dt.date, cfg):
+    # Sólo el día configurado
+    if today.day != (cfg["part_dia_mes"] or 5):
+        return
+    hhmm = cfg["part_hora"] or "10:00"
+    programado = _dt_from_date_and_hhmm(today, hhmm).strftime("%Y-%m-%d %H:%M")
+
+    # Saldo impago del mes actual (usando tu misma lógica de /particulares)
+    ini = today.replace(day=1).isoformat()
+    fin = (today.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
+    fin = fin.isoformat()
+
+    conn = dict_row(db_conn())
+    cur = conn.cursor()
+    filas = cur.execute(f"""
+        SELECT c.id, c.nombre, c.telefono,
+               COALESCE(SUM(COALESCE(a.precio,0)),0) AS total,
+               COALESCE(SUM(CASE WHEN a.estado_pago='Pagado' THEN COALESCE(a.precio,0) ELSE 0 END),0) AS cobrado
+        FROM clientes c
+        LEFT JOIN agenda a
+           ON a.cliente_id=c.id AND a.fecha BETWEEN ? AND ?
+        WHERE c.tipo='Particular'
+        GROUP BY c.id
+        HAVING (total - cobrado) > 0
+        ORDER BY c.nombre COLLATE NOCASE
+    """, (ini, fin)).fetchall()
+
+    tpl = (cfg["part_template"] or
+           "Hola {CLIENTE}, te escribe " + CLINICA +
+           " 🐾. Detectamos facturas impagas del mes. Si ya abonaste, ignorá este mensaje; si no, avisanos y te enviamos el detalle. ¡Gracias!")
+
+    for r in filas:
+        phone = _uy_to_digits(r["telefono"])
+        if not phone: continue
+        msg = tpl.format(CLIENTE=r["nombre"])
+        try:
+            cur.execute("""
+                INSERT OR IGNORE INTO reminder_queue
+                (tipo, cliente_id, telefono, mensaje, programado_en)
+                VALUES ('particular', ?, ?, ?, ?)
+            """, (r["id"], phone, msg, programado))
+        except Exception:
+            pass
+    conn.commit(); conn.close()
+
+# -------------------- Envío de pendientes --------------------
+def _send_due():
+    now_iso = _hoy().strftime("%Y-%m-%d %H:%M")
+    conn = dict_row(db_conn())
+    cur = conn.cursor()
+    rows = cur.execute("""
+        SELECT id, telefono, mensaje FROM reminder_queue
+        WHERE estado='pendiente' AND programado_en<=?
+        ORDER BY programado_en ASC
+        LIMIT 10
+    """, (now_iso,)).fetchall()
+
+    for r in rows:
+        phone = r["telefono"]
+        if not phone:
+            cur.execute("UPDATE reminder_queue SET estado='error', intentos=intentos+1 WHERE id=?", (r["id"],))
+            continue
+        url = _wa_url(phone, r["mensaje"])
+        try:
+            webbrowser.open(url, new=2)  # pestaña nueva
+            cur.execute("""
+                UPDATE reminder_queue
+                SET estado='enviado', enviado_en=datetime('now'), intentos=intentos+1
+                WHERE id=?
+            """, (r["id"],))
+            time.sleep(0.3)
+        except Exception:
+            cur.execute("UPDATE reminder_queue SET estado='error', intentos=intentos+1 WHERE id=?", (r["id"],))
+    conn.commit(); conn.close()
+
+# -------------------- Vistas --------------------
+@bp.route("/")
+def dashboard():
+    cfg = _get_cfg()
+    conn = dict_row(db_conn())
+    pendientes = conn.execute("SELECT * FROM reminder_queue WHERE estado='pendiente' ORDER BY programado_en").fetchall()
+    enviados   = conn.execute("SELECT * FROM reminder_queue WHERE estado='enviado' ORDER BY enviado_en DESC LIMIT 50").fetchall()
+    conn.close()
+    return render_template("recordatorios.html", cfg=cfg, pendientes=pendientes, enviados=enviados)
+
+@bp.route("/config", methods=["POST"])
+def guardar_config():
+    form = request.form
+    def onoff(name): return 1 if form.get(name) == "on" else 0
+    conn = db_conn(); cur = conn.cursor()
+    cur.execute("""
+        UPDATE reminder_config SET
+        mensual_enabled=?, mensual_template=?, mensual_hora=?, mensual_dia_mes=?,
+        vacunas_enabled=?, vacunas_template=?, vacunas_hora=?, vacunas_dias_antes=?,
+        part_enabled=?, part_template=?, part_hora=?, part_dia_mes=?
+        WHERE id=1
+    """, (
+        onoff("mensual_enabled"), form.get("mensual_template") or None, form.get("mensual_hora") or "10:00", int(form.get("mensual_dia_mes") or 1),
+        onoff("vacunas_enabled"), form.get("vacunas_template") or None, form.get("vacunas_hora") or "10:00", int(form.get("vacunas_dias_antes") or 7),
+        onoff("part_enabled"),    form.get("part_template") or None,    form.get("part_hora") or "10:00",  int(form.get("part_dia_mes") or 5),
+    ))
+    conn.commit(); conn.close()
+    flash("Configuración guardada.", "success")
+    return redirect(url_for("recordatorios.dashboard"))
+
+@bp.route("/cola/cancelar/<int:id>", methods=["POST"])
+def cancelar(id):
+    conn = db_conn()
+    conn.execute("UPDATE reminder_queue SET estado='cancelado' WHERE id=?", (id,))
+    conn.commit(); conn.close()
+    return jsonify({"success": True})
+
+@bp.route("/cola/reprogramar/<int:id>", methods=["POST"])
+def reprogramar(id):
+    fecha = request.form.get("fecha")  # YYYY-MM-DD
+    hora  = request.form.get("hora")   # HH:MM
+    if not fecha or not hora:
+        flash("Fecha u hora inválidas.", "danger")
+        return redirect(url_for("recordatorios.dashboard"))
+    conn = db_conn()
+    conn.execute("UPDATE reminder_queue SET programado_en=? WHERE id=?", (f"{fecha} {hora}", id))
+    conn.commit(); conn.close()
+    flash("Reprogramado.", "success")
+    return redirect(url_for("recordatorios.dashboard"))
+
+@bp.route("/cola/enviar_ahora/<int:id>")
+def enviar_ahora(id):
+    conn = dict_row(db_conn())
+    row = conn.execute("SELECT * FROM reminder_queue WHERE id=?", (id,)).fetchone()
+    conn.close()
+    if not row or row["estado"] not in ("pendiente","error"):
+        flash("No se puede enviar.", "warning")
+        return redirect(url_for("recordatorios.dashboard"))
+    phone = row["telefono"]
+    if not phone:
+        flash("El contacto no tiene teléfono válido.", "warning")
+        return redirect(url_for("recordatorios.dashboard"))
+    url = _wa_url(phone, row["mensaje"])
+    # Igual que en tu /whatsapp/cita: abrir y volver
+    html = f"""
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>WhatsApp</title></head>
+<body style="font-family:system-ui;padding:24px">
+  <h3>Abriendo WhatsApp…</h3>
+  <p>Si no se abrió, <a href="{url}" target="_blank" rel="noopener">clic aquí</a>.</p>
+  <script>
+    (function(){{
+      try{{ window.open("{url}", "_blank"); }}catch(_){{}}
+      setTimeout(function(){{
+        window.location.href = "{url_for('recordatorios.dashboard')}";
+      }}, 1200);
+    }})();
+  </script>
+</body></html>
+"""
+    # Marco enviado para no duplicar si el usuario cierra la pestaña: lo dejamos cuando vuelva.
+    conn = db_conn()
+    conn.execute("UPDATE reminder_queue SET estado='enviado', enviado_en=datetime('now'), intentos=intentos+1 WHERE id=?", (id,))
+    conn.commit(); conn.close()
+    return html
