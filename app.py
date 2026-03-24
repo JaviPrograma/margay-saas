@@ -735,6 +735,12 @@ def inject_saas_context():
     }
 
 @app.route("/")
+def inicio():
+    if not current_user_id():
+        return redirect(url_for("login"))
+    return redirect(url_for("index"))
+
+@app.route("/home")
 @require_auth
 def index():
     return render_template("index.html")
