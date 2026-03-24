@@ -16,12 +16,20 @@ CLINIC_NAME = "MARGAY"
 CLINIC_WHATSAPP_RETURN = "agenda_lista"  # adónde volver luego de abrir WhatsApp
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
-DATABASE = os.environ.get('DATABASE_PATH', 'veterinaria.db')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_DB_SOURCE = os.path.join(BASE_DIR, 'veterinaria.db')
+DATABASE = os.environ.get('DATABASE_PATH', '/tmp/veterinaria.db')
 # Opcional: clave simple para el programador de tareas
 app.config.setdefault('TASK_SECRET', 'margay-task')
 
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
+
+# En Render conviene trabajar sobre /tmp. Si hay una base incluida en el proyecto
+# y todavía no existe la base de ejecución, la copiamos para arrancar con datos.
+if DATABASE.startswith('/tmp/') and not os.path.exists(DATABASE) and os.path.exists(DEFAULT_DB_SOURCE):
+    import shutil
+    shutil.copyfile(DEFAULT_DB_SOURCE, DATABASE)
 
 PUBLIC_ENDPOINTS = {'login', 'setup_saas', 'static'}
 
