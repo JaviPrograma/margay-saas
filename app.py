@@ -620,7 +620,7 @@ def login():
                 session['empresa_nombre'] = user['empresa_nombre']
                 session['user_nombre'] = user['nombre']
                 session['rol'] = user['rol']
-                return redirect(url_for('index'))
+                return redirect(url_for('home'))
             flash('Datos de acceso inválidos.', 'danger')
         return render_template('login.html', empresas=empresas)
     finally:
@@ -642,7 +642,7 @@ def require_admin(view):
             return redirect(url_for('login'))
         if current_user_role() != 'admin':
             flash('No tenés permisos para entrar ahí.', 'danger')
-            return redirect(url_for('index'))
+            return redirect(url_for('home'))
         return view(*args, **kwargs)
     return wrapped
 
@@ -736,13 +736,13 @@ def inject_saas_context():
 
 @app.route("/")
 def inicio():
-    if not current_user_id():
+    if not current_user_id() or not current_empresa_id():
         return redirect(url_for("login"))
-    return redirect(url_for("index"))
+    return redirect(url_for("home"))
 
 @app.route("/home")
 @require_auth
-def index():
+def home():
     return render_template("index.html")
 
 # -------- Doctores --------
