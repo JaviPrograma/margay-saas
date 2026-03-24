@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-3">
+  <h2>Registrar Urgencia</h2>
+
+  <form method="POST" class="card p-3">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label">Cliente</label>
+        <select class="form-select" id="cliente_id" name="cliente_id" required>
+          <option value="" selected disabled>Seleccione cliente</option>
+          {% for cli in clientes %}
+            <option value="{{ cli.id }}">{{ cli.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Paciente</label>
+        <select class="form-select" id="animal_id" name="animal_id" required disabled>
+          <option value="">Seleccione cliente primero</option>
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Doctor/a</label>
+        <select class="form-select" name="doctor_id" required>
+          <option value="" selected disabled>Seleccione doctor</option>
+          {% for d in doctores %}
+            <option value="{{ d.id }}">{{ d.nombre }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">Lugar</label>
+        <select class="form-select" name="lugar" required>
+          <option value="Clinica" selected>Clínica</option>
+          <option value="Domicilio">Domicilio</option>
+        </select>
+        <div class="form-text">Debe existir en “Motivos” un motivo de tipo <b>urgencia</b>.</div>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <button type="submit" class="btn btn-danger">Crear urgencia y atender</button>
+      <a href="{{ url_for('agenda_lista') }}" class="btn btn-secondary">Cancelar</a>
+    </div>
+  </form>
+</div>
+
+<script>
+document.getElementById("cliente_id").addEventListener("change", function() {
+  const id = this.value;
+  const sel = document.getElementById("animal_id");
+  sel.innerHTML = '<option>Cargando...</option>';
+  sel.disabled = true;
+  fetch('/api/animales/' + id)
+    .then(r=>r.json())
+    .then(data=>{
+      sel.disabled = false;
+      sel.innerHTML = '<option value="" selected disabled>Seleccione un animal</option>';
+      data.forEach(a=>{
+        const opt = document.createElement('option');
+        opt.value = a.id; opt.textContent = a.nombre;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(()=>{
+      sel.disabled = true;
+      sel.innerHTML = '<option>Error al cargar animales</option>';
+    });
+});
+</script>
+{% endblock %}

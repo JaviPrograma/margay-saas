@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  /* ====== Decoración de fondo (animalitos) ====== */
+  .critters-field{
+    position: fixed;
+    top: 72px; /* coincide con navbar fija */
+    left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+  .critter{
+    position: absolute;
+    user-select: none;
+    opacity: var(--op, .16);
+    font-size: var(--fs, 32px);
+    transform: translate(-50%, -50%) rotate(var(--rot, 0deg));
+    filter: grayscale(25%);
+    animation: drift var(--dur, 7s) ease-in-out infinite;
+  }
+  @keyframes drift{
+    0%   { transform: translate(-50%,-50%) translateY(0) rotate(var(--rot)); }
+    50%  { transform: translate(-50%,-50%) translateY(-10px) rotate(calc(var(--rot) + 2deg)); }
+    100% { transform: translate(-50%,-50%) translateY(0) rotate(var(--rot)); }
+  }
+
+  /* ====== Hero ====== */
+  .landing-hero{ position: relative; z-index: 1; }
+
+  /* Logo con “clusters” laterales */
+  .logo-wrap{
+    position: relative;
+    display: inline-block;
+  }
+  .side-critters{
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 120px;                 /* ancho del área lateral */
+    pointer-events: none;
+  }
+  .side-critters.left{ right: 100%; margin-right: 10px; text-align: right; }
+  .side-critters.right{ left: 100%; margin-left: 10px; }
+  .side-critters .sc{
+    position: absolute;
+    font-size: clamp(20px, 2.6vw, 38px);
+    opacity: .22;                 /* visible pero sutil */
+    filter: grayscale(15%);
+    transform: translate(-50%,-50%) rotate(var(--rot, 0deg));
+  }
+
+  /* Botones */
+  .landing-actions .btn{
+    border-radius: .7rem;
+    padding: .9rem 1rem;
+    font-weight: 600;
+  }
+</style>
+
+<!-- Fondo decorativo -->
+<div class="critters-field" id="critters" aria-hidden="true"></div>
+
+<div class="text-center landing-hero">
+  <!-- Logo + clusters laterales (no arriba) -->
+  <div class="logo-wrap" id="logoWrap">
+    <img
+      src="{{ url_for('static', filename='img/logo.png') }}"
+      alt="MARGAY clínica veterinaria"
+      class="img-fluid"
+      style="max-width: 480px; height: auto; image-rendering: -webkit-optimize-contrast;"
+      id="heroLogo"
+    />
+    <div class="side-critters left" id="sideLeft" aria-hidden="true"></div>
+    <div class="side-critters right" id="sideRight" aria-hidden="true"></div>
+  </div>
+
+  <!-- Acciones -->
+  <div class="landing-actions d-grid gap-3 col-10 col-sm-8 col-md-6 mx-auto mt-4">
+    <a href="{{ url_for('clientes') }}" class="btn btn-primary btn-lg">Gestionar Clientes</a>
+    <a href="{{ url_for('doctores') }}" class="btn btn-primary btn-lg">Gestionar Doctores</a>
+    <a href="{{ url_for('agenda_lista') }}" class="btn btn-primary btn-lg">Ver Agenda</a>
+    <a href="{{ url_for('agenda_nueva') }}" class="btn btn-primary btn-lg">Nueva Cita</a>
+    <a href="{{ url_for('mensajes_panel') }}" class="btn btn-outline-primary btn-lg">Mensajes automáticos</a>
+  </div>
+</div>
+
+<script>
+/* === Animalitos distribuidos por el fondo === */
+(function(){
+  const NAV_H = 72;
+  const EMOJIS = ["🐶","🐱","🐢","🦴","🐾"];
+  const field = document.getElementById('critters');
+
+  function inRect(x,y,rect){ return x>rect.left && x<rect.right && y>rect.top && y<rect.bottom; }
+
+  function scatterGrid(){
+    field.innerHTML = "";
+    const vw = window.innerWidth;
+    const vh = window.innerHeight - NAV_H;
+
+    // Zona segura (logo + botones) para el fondo
+    const hero = document.querySelector('.landing-hero');
+    const r = hero.getBoundingClientRect();
+    const safe = {
+      left:   Math.max(0, r.left - 30),
+      right:  Math.min(vw, r.right + 30),
+      top:    Math.max(0, r.top  - NAV_H - 30),
+      bottom: Math.min(vh, r.bottom - NAV_H + 30)
+    };
+
+    const cellW = Math.max(110, Math.min(180, Math.floor(vw / 10)));
+    const cellH = Math.max(100, Math.min(160, Math.floor(vh / 8)));
+
+    for(let y = cellH/2; y < vh; y += cellH){
+      for(let x = cellW/2; x < vw; x += cellW){
+        if(inRect(x, y, safe)) continue;
+        const edgeBoost = Math.max(0, 1 - (Math.abs(x - vw/2)/(vw/2))*0.7 - (Math.abs(y - vh/2)/(vh/2))*0.3);
+        const placeChance = 0.55 + 0.25*(1 - edgeBoost);
+        if(Math.random() > placeChance) continue;
+
+        const jx = (Math.random()-0.5) * (cellW * 0.6);
+        const jy = (Math.random()-0.5) * (cellH * 0.6);
+        const px = x + jx;
+        const py = y + jy;
+
+        const el = document.createElement('span');
+        el.className = 'critter';
+        el.textContent = EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+        const fs  = 24 + Math.random()*34;      // 24–58 px
+        const op  = 0.12 + Math.random()*0.12;  // 0.12–0.24
+        const rot = (Math.random()*30 - 15) + "deg";
+        const dur = (6 + Math.random()*6) + "s";
+        el.style.left = px + "px";
+        el.style.top  = py + "px";
+        el.style.setProperty('--fs',  fs + 'px');
+        el.style.setProperty('--op',  op);
+        el.style.setProperty('--rot', rot);
+        el.style.setProperty('--dur', dur);
+        field.appendChild(el);
+      }
+    }
+  }
+
+  let to1;
+  function redraw1(){ clearTimeout(to1); to1 = setTimeout(scatterGrid, 120); }
+  window.addEventListener('resize', redraw1);
+  window.addEventListener('pageshow', redraw1);
+  window.addEventListener('load', scatterGrid);
+  document.addEventListener('DOMContentLoaded', scatterGrid);
+})();
+
+/* === Clusters laterales junto al logo (no arriba) === */
+(function(){
+  const LEFT  = document.getElementById('sideLeft');
+  const RIGHT = document.getElementById('sideRight');
+  const IMG   = document.getElementById('heroLogo');
+  const ICONS = ["🐾","🐶","🐱","🐢","🦴","🐾"];
+
+  function drawSide(el, mirror=false){
+    if(!el) return;
+    el.innerHTML = "";
+    const w = el.clientWidth;
+    const h = el.clientHeight;
+    if(h === 0){ return; }
+    const N = 7;
+    for(let i=0;i<N;i++){
+      const t = i/(N-1);
+      const x = w*(mirror? 0.30 : 0.70) + (mirror?-1:1) * (w*0.18) * Math.sin(t*Math.PI*1.1);
+      const y = h*(0.10 + 0.80*t + 0.06*Math.sin(t*Math.PI*2));
+      const span = document.createElement('span');
+      span.className = 'sc';
+      span.textContent = ICONS[i % ICONS.length];
+      const baseRot = mirror ? 20 : -20;
+      const jitter  = (Math.random()*8 - 4);
+      span.style.left = x + "px";
+      span.style.top  = y + "px";
+      span.style.setProperty('--rot', (baseRot + jitter) + "deg");
+      el.appendChild(span);
+    }
+  }
+  function redrawSides(){ drawSide(LEFT, true); drawSide(RIGHT, false); }
+  function initSides(){
+    if(IMG && IMG.complete){ redrawSides(); }
+    else if(IMG){ IMG.addEventListener('load', redrawSides, { once: true }); }
+    else{ redrawSides(); }
+  }
+  if('ResizeObserver' in window && IMG){
+    const ro = new ResizeObserver(() => redrawSides());
+    ro.observe(IMG);
+  }
+  let to2;
+  function debounced(){ clearTimeout(to2); to2 = setTimeout(redrawSides, 80); }
+  window.addEventListener('resize', debounced);
+  window.addEventListener('pageshow', debounced);
+  window.addEventListener('load', initSides);
+  document.addEventListener('DOMContentLoaded', initSides);
+})();
+</script>
+{% endblock %}

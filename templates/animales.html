@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Imagen superior -->
+<div class="text-center my-2">
+  <img
+    src="{{ url_for('static', filename='img/animales.png') }}"
+    alt="Perros y gatos"
+    class="img-fluid"
+    style="max-height: 140px; object-fit: contain;"
+  >
+</div>
+
+<h2>Animales de {{ cliente['nombre'] if cliente else 'Cliente' }}</h2>
+
+<div class="card p-3 mb-4 shadow-sm">
+  <h5>{{ animal_edit and 'Editar Animal' or 'Nuevo Animal' }}</h5>
+  <form method="POST" action="{{ animal_edit and url_for('animal_editar', id=animal_edit['id'], cliente_id=cliente['id'] if cliente else '') or url_for('animal_nuevo', cliente_id=cliente['id'] if cliente else '') }}">
+    <div class="mb-3">
+      <label for="nombre" class="form-label">Nombre</label>
+      <input id="nombre" name="nombre" type="text" class="form-control" required value="{{ animal_edit and animal_edit['nombre'] or '' }}">
+    </div>
+    <div class="mb-3">
+      <label for="especie" class="form-label">Especie</label>
+      <input id="especie" name="especie" type="text" class="form-control" value="{{ animal_edit and animal_edit['especie'] or '' }}">
+    </div>
+    <div class="mb-3">
+      <label for="raza" class="form-label">Raza</label>
+      <input id="raza" name="raza" type="text" class="form-control" value="{{ animal_edit and animal_edit['raza'] or '' }}">
+    </div>
+    <div class="mb-3">
+      <label for="fecha_nacimiento" class="form-label">Fecha de Nacimiento</label>
+      <input id="fecha_nacimiento" name="fecha_nacimiento" type="date" class="form-control" value="{{ animal_edit and animal_edit['fecha_nacimiento'] or '' }}">
+    </div>
+    <button type="submit" class="btn btn-primary">{{ animal_edit and 'Actualizar' or 'Agregar' }}</button>
+    {% if animal_edit %}
+    <a href="{{ url_for('animales', cliente_id=cliente['id']) }}" class="btn btn-secondary ms-2">Cancelar</a>
+    {% endif %}
+  </form>
+</div>
+
+<table class="table table-hover shadow-sm">
+  <thead class="table-info">
+    <tr>
+      <th>Nombre</th>
+      <th>Especie</th>
+      <th>Raza</th>
+      <th>Fecha Nac.</th>
+      <th>Acciones</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for animal in animales %}
+    <tr>
+      <td>{{ animal['nombre'] }}</td>
+      <td>{{ animal['especie'] }}</td>
+      <td>{{ animal['raza'] }}</td>
+      <td>{{ animal['fecha_nacimiento'] }}</td>
+      <td>
+        <a href="{{ url_for('historia', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-primary">Historia Clínica</a>
+        <a href="{{ url_for('vacunas', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-success">Vacunas</a>
+        <a href="{{ url_for('animal_editar', id=animal['id']) }}?cliente_id={{ cliente['id'] }}" class="btn btn-sm btn-warning">Editar</a>
+        <a href="{{ url_for('animal_eliminar', id=animal['id']) }}" class="btn btn-sm btn-danger" onclick="return confirm('¿Eliminar animal?')">Eliminar</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="text-center">No hay animales aún.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<a href="{{ url_for('clientes') }}" class="btn btn-secondary mt-3">⬅ Volver a Clientes</a>
+{% endblock %}

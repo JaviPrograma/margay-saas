@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Mensualidades — Año {{ anio }}</h2>
+
+<div class="card p-3 mb-3 shadow-sm">
+  <form class="row g-3" method="GET" action="{{ url_for('mensualidades_anual') }}">
+    <div class="col-md-3">
+      <label class="form-label">Año</label>
+      <input type="number" class="form-control" name="anio" value="{{ anio }}">
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+      <button class="btn btn-primary" type="submit">Ver</button>
+    </div>
+    <div class="col-md-6 d-flex align-items-end justify-content-end">
+      <a class="btn btn-outline-secondary" href="{{ url_for('mensualidades') }}">Vista mensual</a>
+    </div>
+  </form>
+</div>
+
+<div class="card p-3 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th style="min-width:220px">Cliente</th>
+          {% for m in range(1,13) %}
+            <th class="text-center">{{ m }}</th>
+          {% endfor %}
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clientes %}
+        <tr>
+          <td>
+            <div class="d-flex flex-column">
+              <strong>{{ c['nombre'] }}</strong>
+              <small class="text-muted">{{ c['cedula'] or '' }} · {{ c['telefono'] or '' }}</small>
+            </div>
+          </td>
+          {% for m in range(1,13) %}
+            {% set reg = pagos.get((c['id'], m)) %}
+            <td class="text-center">
+              {% if reg %}
+                <span class="badge {{ 'bg-success' if reg['pagado'] else 'bg-danger' }}" title="{{ reg['pagado'] and 'Pagado' or 'Impago' }}">
+                  {{ reg['pagado'] and '✓' or '—' }}
+                </span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          {% endfor %}
+          <td>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('mensualidades_cliente', cliente_id=c['id'], anio=anio) }}">Ver detalle</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Pruebas de envío</h2>
+<div class="card p-3 shadow-sm">
+  <p class="mb-2">Estos botones abren pestañas de WhatsApp Web para verificar las plantillas y destinatarios:</p>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-primary" href="/_run_mensual_direct?key={{ config['TASK_SECRET'] }}" target="_blank" rel="noopener">Probar recordatorio mensual actual</a>
+    <a class="btn btn-outline-primary" href="/_run_deudor_direct?key={{ config['TASK_SECRET'] }}" target="_blank" rel="noopener">Probar aviso a deudores</a>
+  </div>
+</div>
+{% endblock %}

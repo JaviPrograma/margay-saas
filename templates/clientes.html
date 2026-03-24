@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Imagen superior grande -->
+<div class="text-center my-2">
+  <img
+    src="{{ url_for('static', filename='img/clientes.jpg') }}"
+    alt="Clientes"
+    class="img-fluid shadow-sm"
+    style="width: 100%; max-height: 300px; object-fit: cover; border-radius: 14px;"
+  >
+</div>
+
+<h2>Clientes</h2>
+
+<div class="card p-3 mb-4 shadow-sm">
+  <h5>{{ cliente_edit and 'Editar Cliente' or 'Nuevo Cliente' }}</h5>
+  <form method="POST" action="{{ cliente_edit and url_for('cliente_editar', id=cliente_edit['id']) or url_for('cliente_nuevo') }}">
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label for="nombre" class="form-label">Nombre</label>
+        <input id="nombre" name="nombre" type="text" class="form-control" required value="{{ cliente_edit and cliente_edit['nombre'] or '' }}">
+      </div>
+      <div class="col-md-4">
+        <label for="telefono" class="form-label">Teléfono</label>
+        <input id="telefono" name="telefono" type="text" class="form-control" value="{{ cliente_edit and cliente_edit['telefono'] or '' }}">
+      </div>
+      <div class="col-md-4">
+        <label for="cedula" class="form-label">Cédula</label>
+        <input id="cedula" name="cedula" type="text" class="form-control" value="{{ cliente_edit and cliente_edit['cedula'] or '' }}" placeholder="Ej: 4.123.456-7">
+        <div id="cedulaHelp" class="form-text text-danger d-none">Esa cédula ya existe.</div>
+      </div>
+
+      <div class="col-md-6">
+        <label for="direccion" class="form-label">Dirección</label>
+        <input id="direccion" name="direccion" type="text" class="form-control" value="{{ cliente_edit and cliente_edit['direccion'] or '' }}" placeholder="Calle, nro, barrio/ciudad">
+      </div>
+      <div class="col-md-3">
+        <label for="tipo" class="form-label">Tipo</label>
+        {% set t = (cliente_edit and cliente_edit['tipo']) or 'Particular' %}
+        <select id="tipo" name="tipo" class="form-select">
+          <option value="Particular" {{ 'selected' if t == 'Particular' else '' }}>Particular</option>
+          <option value="Mensual" {{ 'selected' if t == 'Mensual' else '' }}>Mensual</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label for="cuota_mensual" class="form-label">Cuota fija ($) <span class="form-hint">(opcional)</span></label>
+        <input id="cuota_mensual" name="cuota_mensual" type="number" min="0" step="0.01" class="form-control"
+               value="{{ cliente_edit and (cliente_edit['cuota_mensual'] or '') }}">
+        {% if cliente_edit and cliente_edit['tipo']=='Mensual' and (cliente_edit['cuota_mensual'] is none) and (cuotas_sugeridas and cuotas_sugeridas.get(cliente_edit['id'])) %}
+          <div class="form-text">Sugerida por cantidad de mascotas: ${{ '%.2f'|format(cuotas_sugeridas.get(cliente_edit['id'])) }}</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="mt-3 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">{{ cliente_edit and 'Guardar cambios' or 'Agregar' }}</button>
+      {% if cliente_edit %}<a class="btn btn-secondary" href="{{ url_for('clientes') }}">Cancelar</a>{% endif %}
+    </div>
+  </form>
+</div>
+
+<div class="card p-3 shadow-sm">
+  <div class="mb-2">
+    <h5 class="mb-0">Listado</h5>
+  </div>
+
+  <form class="row g-2 mb-3" method="get" action="{{ url_for('clientes') }}">
+    <div class="col-md-4">
+      <input class="form-control" name="nombre" placeholder="Buscar por nombre" value="{{ filtros.nombre }}">
+    </div>
+    <div class="col-md-4">
+      <input class="form-control" name="cedula" placeholder="Buscar por cédula" value="{{ filtros.cedula }}">
+    </div>
+    <div class="col-md-3">
+      <select class="form-select" name="tipo">
+        <option value="">Todos</option>
+        <option value="Mensual" {{ 'selected' if filtros.tipo=='Mensual' else '' }}>Mensual</option>
+        <option value="Particular" {{ 'selected' if filtros.tipo=='Particular' else '' }}>Particular</option>
+      </select>
+    </div>
+    <div class="col-md-1 d-grid">
+      <button class="btn btn-primary">Filtrar</button>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Teléfono</th>
+          <th>Cédula</th>
+          <th>Dirección</th>
+          <th>Tipo</th>
+          <th>Estado</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clientes %}
+        <tr>
+          <td>{{ c['nombre'] }}</td>
+          <td>{{ c['telefono'] or '' }}</td>
+          <td>{{ c['cedula'] or '' }}</td>
+          <td>{{ c['direccion'] or '' }}</td>
+          <td>{{ c['tipo'] }}</td>
+          <td>
+            {% if c['activo'] %}<span class="badge bg-success">Activo</span>
+            {% else %}<span class="badge bg-secondary">Inactivo</span>{% endif %}
+          </td>
+          <td class="d-flex flex-wrap gap-1">
+            <a class="btn btn-sm btn-primary" href="{{ url_for('cliente_editar', id=c['id']) }}">Editar</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('animales', cliente_id=c['id']) }}">Animales</a>
+
+            {# ——— Separación de facturación ——— #}
+            {% if c['tipo'] == 'Mensual' %}
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('mensualidades_cliente', cliente_id=c['id']) }}">
+                Facturación
+              </a>
+            {% else %}
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('particulares_cliente', cliente_id=c['id']) }}">
+                Facturación
+              </a>
+            {% endif %}
+
+            <a class="btn btn-sm btn-danger" href="{{ url_for('cliente_eliminar', id=c['id']) }}" onclick="return confirm('¿Eliminar cliente?');">Eliminar</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// Validación en vivo de cédula única (se mantiene igual)
+const cedulaInput = document.getElementById('cedula');
+if (cedulaInput){
+  const help = document.getElementById('cedulaHelp');
+  cedulaInput.addEventListener('blur', async ()=>{
+    const v = cedulaInput.value.trim();
+    if(!v){ help.classList.add('d-none'); return; }
+    const url = new URL('{{ url_for("api_cedula_check") }}', window.location.origin);
+    url.searchParams.set('cedula', v);
+    {% if cliente_edit %}url.searchParams.set('excluir_id', '{{ cliente_edit["id"] }}');{% endif %}
+    const r = await fetch(url);
+    const j = await r.json();
+    if(j.ok && !j.disponible){ help.classList.remove('d-none'); } else { help.classList.add('d-none'); }
+  });
+}
+</script>
+{% endblock %}

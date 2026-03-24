@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+{% block title %}Editar Animal{% endblock %}
+
+{% block content %}
+<h1>Editar Animal</h1>
+
+<form method="POST" action="{{ url_for('animal_editar', id=animal.id) }}">
+  <div class="mb-3">
+    <label for="nombre" class="form-label">Nombre *</label>
+    <input type="text" name="nombre" id="nombre" class="form-control" value="{{ animal.nombre }}" required />
+  </div>
+  <div class="mb-3">
+    <label for="especie" class="form-label">Especie</label>
+    <input type="text" name="especie" id="especie" class="form-control" value="{{ animal.especie or '' }}" />
+  </div>
+  <div class="mb-3">
+    <label for="raza" class="form-label">Raza</label>
+    <input type="text" name="raza" id="raza" class="form-control" value="{{ animal.raza or '' }}" />
+  </div>
+  <div class="mb-3">
+    <label for="edad" class="form-label">Edad (años)</label>
+    <input type="number" min="0" name="edad" id="edad" class="form-control" value="{{ animal.edad if animal.edad is not none else '' }}" />
+  </div>
+  <button type="submit" class="btn btn-primary">Guardar</button>
+  <a href="{{ url_for('animales', cliente_id=animal.cliente_id) }}" class="btn btn-secondary">Cancelar</a>
+</form>
+{% endblock %}

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  {% block title %}<title>Margay | Clínica Veterinaria</title>{% endblock %}
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <style>
+    :root{
+      --brand: #8c5cc4;
+      --brand-rgb: 140, 92, 196;
+      --bs-primary: var(--brand);
+      --bs-primary-rgb: var(--brand-rgb);
+      --bs-primary-bg-subtle: #f1e9fb;
+      --bs-primary-border-subtle: #decdf5;
+      --bs-link-color: var(--brand);
+      --bs-link-hover-color: #6f46a9;
+      --bs-focus-ring-color: rgba(var(--brand-rgb), .25);
+    }
+    body{ background:#f7f4fb; color:#2a1750; padding-top: 72px; }
+    @media (max-width: 991.98px){ body{ padding-top: 64px; } }
+    nav.navbar{ background: var(--brand); box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+    .navbar-brand, .nav-link{ color:#fff !important; cursor:pointer; }
+    .nav-link:hover{ color:#e7daf8 !important; }
+    .brand-wrap{ display:flex; align-items:center; gap:.5rem; }
+    .brand-paw{ height:28px; width:auto; image-rendering: -webkit-optimize-contrast; filter: drop-shadow(0 1px 0 rgba(0,0,0,.1)); }
+    .btn-primary{
+      --bs-btn-bg: var(--brand); --bs-btn-border-color: var(--brand);
+      --bs-btn-hover-bg: #7a49b5; --bs-btn-hover-border-color: #7242b3;
+      --bs-btn-active-bg: #6c3aa6; --bs-btn-active-border-color: #65359e;
+      --bs-btn-disabled-bg: var(--brand); --bs-btn-disabled-border-color: var(--brand);
+    }
+    .btn-outline-primary{
+      --bs-btn-color: var(--brand); --bs-btn-border-color: var(--brand);
+      --bs-btn-hover-bg: var(--brand); --bs-btn-hover-border-color: var(--brand);
+      --bs-btn-active-bg: #6c3aa6; --bs-btn-active-border-color: #6c3aa6;
+    }
+    .form-check-input:checked{ background-color: var(--brand); border-color: var(--brand); }
+    .form-select:focus, .form-control:focus{
+      border-color: var(--brand); box-shadow: 0 0 0 .25rem rgba(var(--brand-rgb), .25);
+    }
+    .table-primary{
+      --bs-table-color: #2d114b;
+      --bs-table-bg: var(--bs-primary-bg-subtle);
+      --bs-table-border-color: var(--bs-primary-border-subtle);
+      --bs-table-striped-bg: #ebe0f7; --bs-table-striped-color: #2d114b;
+      --bs-table-active-bg: #e2d4f6; --bs-table-active-color: #2d114b;
+      --bs-table-hover-bg: #eae3f7; --bs-table-hover-color: #2d114b;
+    }
+    .alert-primary{
+      --bs-alert-bg: var(--bs-primary-bg-subtle);
+      --bs-alert-border-color: var(--bs-primary-border-subtle);
+      --bs-alert-color: #2d114b;
+    }
+    footer{ margin-top: 2rem; padding: 1rem 0; text-align: center; color: #5b3a8c; }
+  </style>
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark fixed-top">
+  <div class="container">
+    <a class="navbar-brand" href="{{ url_for('index') }}">
+      <span class="brand-wrap">
+        <img src="{{ url_for('static', filename='img/manito.png') }}" alt="Margay" class="brand-paw">
+        <strong>{{ empresa_nombre }}</strong>
+      </span>
+    </a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#menuNav" aria-controls="menuNav" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="menuNav">
+      <ul class="navbar-nav ms-auto">
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('clientes') }}">Clientes</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('doctores') }}">Doctores</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('agenda_lista') }}">Agenda</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('motivos') }}">Motivos</a></li>
+
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" id="factMenu" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            Facturación
+          </a>
+          <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="factMenu">
+            <li><a class="dropdown-item" href="{{ url_for('facturacion') }}">Panel de facturación</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="{{ url_for('mensualidades') }}">Mensualidades (mensual)</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('mensualidades_anual') }}">Mensualidades (anual)</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('particulares_resumen') }}">Particulares</a></li>
+          </ul>
+        </li>
+
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('feriados') }}">Feriados</a></li>
+      </ul>
+      <div class="d-flex align-items-center gap-3 text-white ms-lg-3">
+        <small class="opacity-75">{{ user_nombre or "" }}</small>
+        {% if user_rol == "admin" %}<a class="btn btn-sm btn-outline-light" href="{{ url_for('veterinarias_panel') }}">Veterinarias</a>{% endif %}
+        {% if user_nombre %}<a class="btn btn-sm btn-light" href="{{ url_for('logout') }}">Salir</a>{% endif %}
+      </div>
+    </div>
+  </div>
+</nav>
+
+<main class="container my-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="container">
+        {% for category, message in messages %}
+          <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% block content %}{% endblock %}
+</main>
+
+<footer>
+  &copy; 2025 @Javier Sistemas
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

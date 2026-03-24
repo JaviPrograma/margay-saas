@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-3">
+  <div class="alert alert-success">
+    Enviando WhatsApp al cliente… Si no se abre automáticamente, <a id="waLink" href="#" target="_blank" rel="noopener">clic aquí</a>.
+  </div>
+  <p>Volveremos a la agenda en unos segundos…</p>
+</div>
+
+<script>
+(function(){
+  const phone = {{ phone|tojson }};
+  const text  = {{ text|tojson }};
+  const wa = ( /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) )
+    ? `https://api.whatsapp.com/send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`
+    : `https://web.whatsapp.com/send?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(text)}`;
+
+  const a = document.getElementById('waLink');
+  a.href = wa;
+  window.open(wa, '_blank', 'noopener');
+
+  setTimeout(()=>{ window.location.href = "{{ url_for('agenda_lista') }}"; }, 2500);
+})();
+</script>
+{% endblock %}

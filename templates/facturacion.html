@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="rounded-3 overflow-hidden mb-3" style="box-shadow:0 6px 16px rgba(0,0,0,.08);">
+  <img src="{{ url_for('static', filename='img/mensualidades.jpg') }}" alt="Facturación"
+       style="width:100%; height:220px; object-fit:cover; object-position:center;">
+</div>
+
+<h2>Facturación</h2>
+<div class="row g-3">
+  <div class="col-md-4">
+    <div class="card p-3 shadow-sm h-100">
+      <h5>Mensualidades</h5>
+      <p class="text-muted mb-2">Ver y marcar pagos por mes.</p>
+      <form class="row g-2" method="get" action="{{ url_for('mensualidades') }}">
+        <div class="col-6">
+          <label class="form-label">Año</label>
+          <input name="anio" type="number" class="form-control" value="{{ anio }}">
+        </div>
+        <div class="col-6">
+          <label class="form-label">Mes</label>
+          <select name="mes" class="form-select">
+            {% for m in range(1,13) %}
+              <option value="{{ m }}" {{ 'selected' if m==mes else '' }}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 d-grid">
+          <button class="btn btn-primary">Abrir mensualidades</button>
+        </div>
+      </form>
+      <a class="btn btn-link mt-2 p-0" href="{{ url_for('mensualidades_anual', anio=anio) }}">Ver vista anual →</a>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3 shadow-sm h-100">
+      <h5>Particulares</h5>
+      <p class="text-muted mb-2">Resumen y cobros por cliente sin plan mensual.</p>
+      <form class="row g-2" method="get" action="{{ url_for('particulares_resumen') }}">
+        <div class="col-6">
+          <label class="form-label">Año</label>
+          <input name="anio" type="number" class="form-control" value="{{ anio }}">
+        </div>
+        <div class="col-6">
+          <label class="form-label">Mes</label>
+          <select name="mes" class="form-select">
+            {% for m in range(1,13) %}
+              <option value="{{ m }}" {{ 'selected' if m==mes else '' }}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 d-grid">
+          <button class="btn btn-primary">Abrir particulares</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card p-3 shadow-sm h-100">
+      <h5>Atajos</h5>
+      <div class="d-grid gap-2">
+        <a class="btn btn-outline-primary" href="{{ url_for('mensualidades_anual', anio=anio) }}">Mensualidades (anual)</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('mensualidades') }}">Mensualidades (mensual)</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('particulares_resumen') }}">Particulares</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Mensualidad de {{ mensualidad.cliente_nombre }} — {{ mensualidad.mes }}/{{ mensualidad.anio }}</h2>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card p-3 shadow-sm">
+      <div class="small text-muted">Cuota</div>
+      <div class="fs-5">${{ '%.2f'|format(monto_cuota or 0) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 shadow-sm">
+      <div class="small text-muted">Consultas cobradas</div>
+      <div class="fs-5">${{ '%.2f'|format(extras or 0) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 shadow-sm">
+      <div class="small text-muted">Total</div>
+      <div class="fs-5">${{ '%.2f'|format(total or 0) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 shadow-sm">
+      <div class="small text-muted">Saldo</div>
+      <div class="fs-5">${{ '%.2f'|format(saldo or 0) }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card p-3 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Hora</th>
+          <th>Animal</th>
+          <th>Doctor</th>
+          <th>Motivo</th>
+          <th>Lugar</th>
+          <th>Precio ($)</th>
+          <th>En esta mensualidad</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in citas %}
+        <tr>
+          <td>{{ c.fecha }}</td>
+          <td>{{ c.hora }}</td>
+          <td>{{ c.animal_nombre }}</td>
+          <td>{{ c.doctor_nombre }}</td>
+          <td>{{ c.motivo_nombre or '—' }}</td>
+          <td>{{ c.lugar or 'Clinica' }}</td>
+          <td>{{ (c.precio is not none) and ('%.2f'|format(c.precio)) or '—' }}</td>
+          <td>
+            {% if c.cobrada_mensualidad_id == mensualidad.id %}
+              <span class="badge bg-success">Sí</span>
+            {% else %}
+              <span class="badge bg-secondary">No</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if c.cobrada_mensualidad_id == mensualidad.id %}
+              <button class="btn btn-sm btn-outline-danger" onclick="quitar({{ c.id }})">Quitar</button>
+            {% else %}
+              <button class="btn btn-sm btn-outline-primary" onclick="asignar({{ c.id }})">Asignar</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<a class="btn btn-secondary mt-3" href="{{ url_for('mensualidades', anio=mensualidad.anio, mes=mensualidad.mes) }}">⬅ Volver</a>
+
+<script>
+async function asignar(citaId){
+  const r = await fetch('{{ url_for("mensualidad_asignar_cita") }}', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ cita_id: citaId, mensualidad_id: {{ mensualidad.id }} })
+  });
+  if(!r.ok){ alert('Error'); return; }
+  location.reload();
+}
+async function quitar(citaId){
+  const r = await fetch('{{ url_for("mensualidad_quitar_cita") }}', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ cita_id: citaId })
+  });
+  if(!r.ok){ alert('Error'); return; }
+  location.reload();
+}
+</script>
+{% endblock %}

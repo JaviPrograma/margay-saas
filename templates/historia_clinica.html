@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Historia Clínica de {{ animal['nombre'] }}</h2>
+
+<div class="list-group mt-3">
+  {% for entry in historia %}
+  <div class="list-group-item mb-3 shadow-sm bg-white">
+    <div class="d-flex justify-content-between align-items-center">
+      <small class="text-muted">Fecha: {{ entry['fecha'] }}</small>
+      <div class="d-flex align-items-center gap-2">
+        {% if entry['doctor_nombre'] %}
+          <small class="text-muted">Atendido por: <strong>{{ entry['doctor_nombre'] }}</strong></small>
+        {% endif %}
+        {% if entry['tipo_visita'] %}
+          <span class="badge bg-info text-dark">{{ entry['tipo_visita'] }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if entry['motivo_consulta'] %}
+      <div class="mt-2"><strong>Motivo:</strong> {{ entry['motivo_consulta'] }}</div>
+    {% endif %}
+    {% if entry['anamnesis'] %}
+      <div><strong>Anamnesis:</strong> {{ entry['anamnesis'] }}</div>
+    {% endif %}
+
+    {% if entry['peso_kg'] or entry['temp_c'] or entry['fc'] or entry['fr'] or entry['mucosas'] or entry['hidratacion'] %}
+    <div class="mt-2">
+      <strong>Examen físico:</strong>
+      <ul class="mb-0">
+        {% if entry['peso_kg'] is not none %}<li>Peso: {{ entry['peso_kg'] }} kg</li>{% endif %}
+        {% if entry['temp_c'] is not none %}<li>T°: {{ entry['temp_c'] }} °C</li>{% endif %}
+        {% if entry['fc'] is not none %}<li>FC: {{ entry['fc'] }} lpm</li>{% endif %}
+        {% if entry['fr'] is not none %}<li>FR: {{ entry['fr'] }} rpm</li>{% endif %}
+        {% if entry['mucosas'] %}<li>Mucosas: {{ entry['mucosas'] }}</li>{% endif %}
+        {% if entry['hidratacion'] %}<li>Hidratación: {{ entry['hidratacion'] }}</li>{% endif %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% if entry['diagnostico_presuntivo'] %}
+      <div class="mt-2"><strong>Dx presuntivo:</strong> {{ entry['diagnostico_presuntivo'] }}</div>
+    {% endif %}
+    {% if entry['diagnostico_diferencial'] %}
+      <div><strong>Dx diferencial:</strong> {{ entry['diagnostico_diferencial'] }}</div>
+    {% endif %}
+    {% if entry['tratamiento'] %}
+      <div class="mt-2"><strong>Tratamiento:</strong> {{ entry['tratamiento'] }}</div>
+    {% endif %}
+    {% if entry['indicaciones'] %}
+      <div><strong>Indicaciones:</strong> {{ entry['indicaciones'] }}</div>
+    {% endif %}
+    {% if entry['particularidades'] %}
+      <div><strong>Particularidades:</strong> {{ entry['particularidades'] }}</div>
+    {% endif %}
+    {% if entry['proxima_cita'] %}
+      <div class="mt-2 text-primary"><strong>Próxima cita:</strong> {{ entry['proxima_cita'] }}</div>
+    {% endif %}
+
+    {% if imagenes[entry['id']] %}
+    <div class="d-flex flex-wrap gap-2 mt-2">
+      {% for img in imagenes[entry['id']] %}
+      <img src="{{ url_for('uploads', filename=img['filename']) }}" alt="Imagen" style="max-height: 150px; border-radius: 6px; box-shadow: 0 0 5px #888;">
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if entry['descripcion'] %}
+      <p class="mt-2">{{ entry['descripcion']|replace('\n','<br>')|safe }}</p>
+    {% endif %}
+
+    <!-- Botón opcional: abrir agendado con datos precargados -->
+    <div class="mt-2">
+      <a class="btn btn-sm btn-outline-primary"
+         href="{{ url_for('agenda_nueva',
+                          cliente_id=animal['cliente_id'],
+                          animal_id=animal['id'],
+                          doctor_id=(entry['a_doctor_id'] or entry['doctor_id']),
+                          motivo_id=entry['a_motivo_id'],
+                          lugar=(entry['a_lugar'] or 'Clinica')) }}">
+        Programar próxima cita
+      </a>
+    </div>
+  </div>
+  {% else %}
+  <p>No hay entradas en la historia clínica aún.</p>
+  {% endfor %}
+</div>
+
+<a href="{{ url_for('animales', cliente_id=animal['cliente_id']) }}" class="btn btn-secondary mt-3">⬅ Volver a Animales</a>
+{% endblock %}

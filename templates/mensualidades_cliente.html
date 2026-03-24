@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Mensualidades de {{ cliente['nombre'] }} — Año {{ anio }}</h2>
+
+<div class="card p-3 mb-3 shadow-sm">
+  <form class="row g-3" method="GET" action="{{ url_for('mensualidades_cliente', cliente_id=cliente['id']) }}">
+    <div class="col-md-3">
+      <label class="form-label">Año</label>
+      <input type="number" class="form-control" name="anio" value="{{ anio }}">
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+      <button class="btn btn-primary" type="submit">Ver</button>
+    </div>
+    <div class="col-md-6 d-flex align-items-end justify-content-end">
+      <a class="btn btn-outline-secondary" href="{{ url_for('mensualidades_anual', anio=anio) }}">Volver a vista anual</a>
+    </div>
+  </form>
+</div>
+
+<div class="card p-3 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Mes</th>
+          <th>Estado</th>
+          <th>Fecha de pago</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in range(1,13) %}
+        {% set reg = por_mes.get(m) %}
+        <tr>
+          <td>{{ m }}</td>
+          <td>
+            {% if reg %}
+              <span class="badge {{ 'bg-success' if reg['pagado'] else 'bg-danger' }}" id="b{{ reg['mensualidad_id'] }}">{{ reg['pagado'] and 'Pagado' or 'Impago' }}</span>
+            {% else %}
+              <span class="badge bg-secondary">(sin registro)</span>
+            {% endif %}
+          </td>
+          <td id="f{{ reg and reg['mensualidad_id'] or '' }}">{{ reg and (reg['fecha_pago'] or '') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

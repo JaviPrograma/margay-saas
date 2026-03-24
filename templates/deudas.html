@@ -1,0 +1,33 @@
+{% extends 'base.html' %}
+{% block title %}Deudas - Veterinaria{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">Deudas</h1>
+
+<table class="table table-striped table-bordered table-hover align-middle">
+  <thead class="table-primary">
+    <tr>
+      <th>Cliente</th>
+      <th>Monto</th>
+      <th>Estado</th>
+      <th>Acciones</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% if deudas %}
+      {% for d in deudas %}
+      <tr>
+        <td>{{ d.cliente_nombre }}</td>
+        <td>{{ d.monto }}</td>
+        <td>{{ d.estado }}</td>
+        <td>
+          <a href="{{ url_for('deuda_pagar', id=d.id) }}" class="btn btn-sm btn-success">Marcar como Pagado</a>
+        </td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="4" class="text-center">No hay deudas pendientes.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endblock %}

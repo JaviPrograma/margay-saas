@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="rounded-3 overflow-hidden mb-3" style="box-shadow:0 6px 16px rgba(0,0,0,.1);">
+  <img
+    src="{{ url_for('static', filename='img/particular.jpg') }}"
+    alt="Deudores"
+    class="w-100 hero-220"
+    style="object-fit:cover; object-position:center;"
+  >
+</div>
+
+<h2>Clientes Deudores</h2>
+
+<div class="card p-3 shadow-sm">
+  <div class="table-wrap">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th class="hide-xs">Cédula</th>
+          <th>Teléfono</th>
+          <th class="hide-xs">Dirección</th>
+          <th class="hide-xs">Tipo</th>
+          <th class="hide-xs">Cuota ($)</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in clientes %}
+        <tr>
+          <td>{{ c.nombre }}</td>
+          <td class="hide-xs">{{ c.cedula or '' }}</td>
+          <td>{{ c.telefono or '' }}</td>
+          <td class="hide-xs">{{ c.direccion or '' }}</td>
+          <td class="hide-xs">{{ c.tipo }}</td>
+          <td class="hide-xs">
+            {% if c.tipo == 'Mensual' %}
+              {% set cue = c.cuota_mensual %}
+              {{ cue is not none and ('%.2f'|format(cue)) or 'Auto' }}
+            {% else %}-{% endif %}
+          </td>
+          <td class="d-flex flex-wrap gap-1">
+            <a class="btn btn-sm btn-outline-primary"
+               href="{{ url_for('mensualidades_cliente', cliente_id=c.id) }}">
+               Mensualidades
+            </a>
+            <form method="post" action="{{ url_for('deudores_quitar', cliente_id=c.id) }}"
+                  onsubmit="return confirm('¿Marcar como al día?');">
+              <button class="btn btn-sm btn-success">Marcar al día</button>
+            </form>
+            <a class="btn btn-sm btn-secondary" href="{{ url_for('cliente_editar', id=c.id) }}">Editar</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="text-center">No hay clientes deudores.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

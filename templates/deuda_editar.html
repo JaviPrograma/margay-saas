@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Editar Deuda</h2>
+
+<form method="post">
+    <div class="mb-3">
+        <label>Cliente:</label>
+        <select name="cliente_id" class="form-select" required>
+            <option value="">Seleccione...</option>
+            {% for c in clientes %}
+                <option value="{{ c['id'] }}" {% if c['id'] == deuda['cliente_id'] %}selected{% endif %}>{{ c['nombre'] }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="mb-3">
+        <label>Mes (YYYY-MM):</label>
+        <input type="month" name="mes" value="{{ deuda['mes'] }}" class="form-control" required />
+    </div>
+    <div class="mb-3">
+        <label>Monto:</label>
+        <input type="number" name="monto" step="0.01" value="{{ deuda['monto'] }}" class="form-control" required />
+    </div>
+    <div class="form-check mb-3">
+        <input type="checkbox" name="pagado" id="pagado" class="form-check-input" {% if deuda['pagado'] == 1 %}checked{% endif %} />
+        <label for="pagado" class="form-check-label">Pagado</label>
+    </div>
+    <div class="mb-3">
+        <label>Fecha de pago (si pagado):</label>
+        <input type="date" name="fecha_pago" value="{{ deuda['fecha_pago'] }}" class="form-control" />
+    </div>
+    <button type="submit" class="btn btn-primary">Guardar</button>
+    <a href="{{ url_for('deudas_lista') }}" class="btn btn-secondary ms-2">Cancelar</a>
+</form>
+{% endblock %}

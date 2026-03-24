@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h2>Cita agendada</h2>
+
+  <div class="alert alert-success">
+    ¡Listo! Registramos la cita de <b>{{ cita.cliente_nombre }}</b> para
+    <b>{{ cita.fecha }}</b> a las <b>{{ cita.hora }}</b> — {{ cita.animal_nombre }} · {{ cita.motivo_nombre }}
+    ({{ cita.lugar }}).
+  </div>
+
+  {% if wa_link %}
+    <div id="autoMsg" class="alert alert-info">
+      Intentando abrir <b>WhatsApp Web</b> con el mensaje listo… Si no se abre, usá este botón:
+    </div>
+    <a href="{{ wa_link }}" target="_blank" rel="noopener" class="btn btn-success me-2">Abrir WhatsApp</a>
+  {% else %}
+    <div class="alert alert-warning">
+      Este cliente no tiene teléfono cargado. Podés agregarlo desde <a href="{{ url_for('clientes') }}">Clientes</a>.
+    </div>
+  {% endif %}
+
+  <a href="{{ url_for('agenda_lista') }}" class="btn btn-secondary mt-3">Volver a la agenda</a>
+</div>
+
+{% if wa_link %}
+<script>
+document.addEventListener('DOMContentLoaded', function(){
+  try {
+    const win = window.open("{{ wa_link }}", "_blank", "noopener");
+    // Si el navegador bloquea el popup, el botón queda como fallback
+  } catch(e) {}
+});
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Imagen superior -->
+<div class="text-center my-2">
+  <img
+    src="{{ url_for('static', filename='img/veterinario.png') }}"
+    alt="Veterinario con mascotas"
+    class="img-fluid"
+    style="max-height: 160px; object-fit: contain;"
+  >
+</div>
+
+<h2>Doctores</h2>
+
+<div class="card p-3 mb-4 shadow-sm">
+  <h5>{{ doctor_edit and 'Editar Doctor' or 'Nuevo Doctor' }}</h5>
+  <form method="POST" action="{{ doctor_edit and url_for('doctor_editar', id=doctor_edit['id']) or url_for('doctor_nuevo') }}">
+    <div class="mb-3">
+      <label for="nombre" class="form-label">Nombre</label>
+      <input id="nombre" name="nombre" type="text" class="form-control" required value="{{ doctor_edit and doctor_edit['nombre'] or '' }}">
+    </div>
+    <div class="mb-3">
+      <label for="especialidad" class="form-label">Especialidad</label>
+      <input id="especialidad" name="especialidad" type="text" class="form-control" value="{{ doctor_edit and doctor_edit['especialidad'] or '' }}">
+    </div>
+    <button type="submit" class="btn btn-primary">{{ doctor_edit and 'Actualizar' or 'Agregar' }}</button>
+    {% if doctor_edit %}
+    <a href="{{ url_for('doctores') }}" class="btn btn-secondary ms-2">Cancelar</a>
+    {% endif %}
+  </form>
+</div>
+
+<table class="table table-hover shadow-sm">
+  <thead class="table-success">
+    <tr>
+      <th>Nombre</th>
+      <th>Especialidad</th>
+      <th>Acciones</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for doctor in doctores %}
+    <tr>
+      <td>{{ doctor['nombre'] }}</td>
+      <td>{{ doctor['especialidad'] }}</td>
+      <td>
+        <a href="{{ url_for('doctor_editar', id=doctor['id']) }}" class="btn btn-sm btn-warning">Editar</a>
+        <a href="{{ url_for('doctor_eliminar', id=doctor['id']) }}" class="btn btn-sm btn-danger" onclick="return confirm('¿Eliminar doctor?')">Eliminar</a>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="text-center">No hay doctores aún.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

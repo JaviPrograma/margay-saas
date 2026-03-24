@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block title %}<title>Agenda - Veterinaria</title>{% endblock %}
+
+{% block content %}
+
+<!-- Banner -->
+<div class="rounded-3 overflow-hidden shadow-sm mb-3">
+  <img
+    src="{{ url_for('static', filename='agenda.jpg') }}"
+    alt="Agenda"
+    class="w-100"
+    style="height: 260px; object-fit: cover; object-position: center;"
+  />
+</div>
+
+<h1 class="mb-4">Agenda de Citas</h1>
+
+<a href="{{ url_for('agenda_nueva') }}" class="btn btn-success mb-3">+ Nueva Cita</a>
+
+<table class="table table-striped table-bordered table-hover align-middle">
+  <thead class="table-primary">
+    <tr>
+      <th>Fecha y Hora</th>
+      <th>Cliente</th>
+      <th>Animal</th>
+      <th>Doctor</th>
+      <th>Motivo</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% if citas %}
+      {% for c in citas %}
+      <tr>
+        <td>{{ c.fecha_hora }}</td>
+        <td>{{ c.cliente_nombre }}</td>
+        <td>{{ c.animal_nombre }}</td>
+        <td>{{ c.doctor_nombre }}</td>
+        <td>{{ c.motivo_nombre }}</td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="5" class="text-center">No hay citas programadas.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+{% endblock %}

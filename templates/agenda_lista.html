@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Banner -->
+<div class="mb-3">
+  <img
+    src="{{ url_for('static', filename='img/agenda.jpg') }}"
+    alt="Agenda"
+    class="img-fluid w-100 rounded shadow-sm"
+    style="height: 220px; object-fit: cover; object-position: center;"
+  >
+</div>
+
+<div class="container mt-2">
+  <h2>Lista de Citas</h2>
+
+  <form method="GET" action="{{ url_for('agenda_lista') }}" class="row g-3 mb-4">
+    <div class="col-md-3">
+      <input type="date" name="fecha" value="{{ filtros.fecha or '' }}" class="form-control" placeholder="Fecha" />
+    </div>
+    <div class="col-md-3">
+      <select name="doctor_id" class="form-select">
+        <option value="">Todos los doctores</option>
+        {% for doctor in doctores %}
+          <option value="{{ doctor.id }}" {% if filtros.doctor_id == doctor.id|string %}selected{% endif %}>{{ doctor.nombre }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <select name="cliente_id" class="form-select">
+        <option value="">Todos los clientes</option>
+        {% for cliente in clientes %}
+          <option value="{{ cliente.id }}" {% if filtros.cliente_id == cliente.id|string %}selected{% endif %}>{{ cliente.nombre }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <select name="estado" class="form-select">
+        <option value="Pendiente"  {% if filtros.estado=='Pendiente' %}selected{% endif %}>Pendientes</option>
+        <option value="Atendidas"  {% if filtros.estado=='Atendidas' %}selected{% endif %}>Atendidas</option>
+        <option value="Todas"      {% if filtros.estado=='Todas' %}selected{% endif %}>Todas</option>
+      </select>
+    </div>
+    <div class="col-md-1">
+      <button type="submit" class="btn btn-primary w-100">Filtrar</button>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-striped table-hover align-middle">
+      <thead class="table-primary">
+        <tr>
+          <th>Fecha</th>
+          <th>Hora</th>
+          <th>Cliente</th>
+          <th>Animal</th>
+          <th>Doctor</th>
+          <th>Motivo</th>
+          <th>Lugar</th>
+          <th>Precio ($)</th>
+          <th>Estado Pago</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cita in citas %}
+        <tr>
+          <td>{{ cita.fecha }}</td>
+          <td>{{ cita.hora }}</td>
+          <td>{{ cita.cliente_nombre }}</td>
+          <td>{{ cita.animal_nombre }}</td>
+          <td>{{ cita.doctor_nombre }}</td>
+          <td>
+            {{ cita.motivo_nombre or 'Sin motivo' }}
+            {% if cita.motivo_tipo=='urgencia' %}<span class="badge bg-danger ms-1">Urgencia</span>{% endif %}
+          </td>
+          <td>{{ cita.lugar or 'Clinica' }}</td>
+          <td>{{ (cita.precio is not none) and ('%.2f'|format(cita.precio)) or '—' }}</td>
+          <td style="min-width: 120px;">
+            <select class="form-select estado-pago-select" data-cita-id="{{ cita.id }}" {% if cita.atendida %}disabled{% endif %}>
+              <option value="Debe"   {% if cita.estado_pago == 'Debe' %}selected{% endif %}>Debe</option>
+              <option value="Pagado" {% if cita.estado_pago == 'Pagado' %}selected{% endif %}>Pagado</option>
+            </select>
+          </td>
+          <td style="min-width:150px;">
+            {% if not cita.atendida %}
+              <a class="btn btn-sm btn-outline-success" href="{{ url_for('atender_cita', cita_id=cita.id) }}">Atender</a>
+            {% else %}
+              <span class="badge bg-secondary">Atendida</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="10" class="text-center">No hay citas para mostrar.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.estado-pago-select').forEach(function(select) {
+  select.addEventListener('change', function() {
+    const citaId = this.getAttribute('data-cita-id');
+    const nuevoEstado = this.value;
+
+    fetch('/agenda/estado_pago/' + citaId, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({ estado_pago: nuevoEstado })
+    })
+    .then(response => response.json())
+    .then(data => {
+      if(data.success){
+        this.classList.add('is-valid');
+        setTimeout(() => this.classList.remove('is-valid'), 1500);
+      } else {
+        alert('Error al actualizar el estado de pago.');
+      }
+    })
+    .catch(() => {
+      alert('Error al actualizar el estado de pago.');
+    });
+  });
+});
+</script>
+{% endblock %}

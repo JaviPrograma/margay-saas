@@ -1,0 +1,41 @@
+
+{% extends "base.html" %}
+{% block content %}
+<h2>Previsualización — {{ 'Mensualidades' if tipo=='mensual' else 'Deudores' }}</h2>
+
+<div class="alert alert-info">Se abrirá WhatsApp Web en pestañas (permití popups si el navegador los bloquea).</div>
+
+<div class="table-responsive">
+  <table class="table table-striped align-middle">
+    <thead>
+      <tr><th>Cliente</th><th>Teléfono</th><th>Mensaje</th><th>Acción</th></tr>
+    </thead>
+    <tbody>
+      {% for it in lista %}
+      <tr>
+        <td>{{ it.nombre }}</td>
+        <td>{{ it.telefono }}</td>
+        <td><small>{{ it.texto }}</small></td>
+        <td><a class="btn btn-sm btn-success" target="_blank" rel="noopener" href="{{ it.wa }}">Abrir WhatsApp</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="text-center">No hay destinatarios.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="mt-3 d-flex gap-2">
+  <button class="btn btn-primary" id="sendAll" {% if not lista %}disabled{% endif %}>Abrir todos</button>
+  <a class="btn btn-secondary" href="{{ url_for('mensajes_panel', anio=anio, mes=mes) }}">Volver</a>
+</div>
+
+<script>
+document.getElementById('sendAll')?.addEventListener('click', ()=>{
+  const links = Array.from(document.querySelectorAll('a.btn-success'));
+  for(const a of links){
+    window.open(a.href, '_blank', 'noopener');
+  }
+});
+</script>
+{% endblock %}

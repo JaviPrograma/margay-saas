@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-3">
+  <div class="alert alert-success">
+    Abriendo WhatsApp Web para {{ total }} cliente{{ total!=1 and 's' or '' }}…
+    Si el navegador bloquea pop-ups, habilitalos o usá los links de abajo.
+  </div>
+  <ol id="links">
+    {% for it in items %}
+      <li>
+        <a href="{{ it.url }}" target="_blank" rel="noopener">
+          {{ it.cliente }} ({{ it.telefono }})
+        </a>
+        — {{ it.resumen }}
+      </li>
+    {% endfor %}
+  </ol>
+</div>
+<script>
+  // Abrimos de a uno para evitar bloqueos agresivos
+  const links = Array.from(document.querySelectorAll('#links a'));
+  let i = 0;
+  function openNext(){
+    if(i >= links.length) return;
+    const a = links[i++];
+    // click programático (mejor que window.open para algunos navegadores)
+    a.click();
+    setTimeout(openNext, 900);
+  }
+  window.addEventListener('load', openNext);
+</script>
+{% endblock %}

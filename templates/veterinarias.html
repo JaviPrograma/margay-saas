@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}<title>Margay SaaS | Veterinarias</title>{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
+  <div>
+    <h2 class="mb-1">Veterinarias</h2>
+    <p class="text-muted mb-0">Alta de nuevas clínicas y control básico del SaaS.</p>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-primary text-white"><strong>Nueva veterinaria</strong></div>
+      <div class="card-body">
+        <form method="POST" action="{{ url_for('veterinaria_nueva') }}" class="row g-3">
+          <div class="col-12">
+            <label class="form-label">Nombre de la veterinaria</label>
+            <input type="text" name="nombre" class="form-control" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Slug / identificador</label>
+            <input type="text" name="slug" class="form-control" placeholder="veterinaria-centro">
+            <div class="form-text">Si lo dejás vacío se genera desde el nombre.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Plan</label>
+            <select name="plan" class="form-select">
+              <option value="starter">Starter</option>
+              <option value="pro">Pro</option>
+              <option value="premium">Premium</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Admin inicial</label>
+            <input type="text" name="admin_nombre" class="form-control" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Email admin</label>
+            <input type="email" name="admin_email" class="form-control" required>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Contraseña inicial</label>
+            <input type="text" name="password" class="form-control" required minlength="6">
+          </div>
+          <div class="col-12 d-grid">
+            <button class="btn btn-primary">Crear veterinaria</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm border-0">
+      <div class="card-header bg-light"><strong>Veterinarias cargadas</strong></div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover mb-0 align-middle">
+            <thead class="table-primary">
+              <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Slug</th>
+                <th>Plan</th>
+                <th>Usuarios</th>
+                <th>Estado</th>
+                <th class="text-end">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in empresas %}
+              <tr>
+                <td>{{ e.id }}</td>
+                <td>{{ e.nombre }}</td>
+                <td><code>{{ e.slug or '-' }}</code></td>
+                <td><span class="badge bg-secondary">{{ e.plan }}</span></td>
+                <td>{{ e.usuarios_activos }}</td>
+                <td>
+                  {% if e.activa %}
+                    <span class="badge bg-success">Activa</span>
+                  {% else %}
+                    <span class="badge bg-danger">Inactiva</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <form method="POST" action="{{ url_for('veterinaria_toggle', empresa_id=e.id) }}">
+                    <button class="btn btn-sm {% if e.activa %}btn-outline-danger{% else %}btn-outline-success{% endif %}">
+                      {% if e.activa %}Desactivar{% else %}Activar{% endif %}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="7" class="text-center py-4 text-muted">No hay veterinarias cargadas.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

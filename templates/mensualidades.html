@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Banner superior -->
+<div class="rounded-3 overflow-hidden mb-3" style="height:180px;">
+  <img
+    src="{{ url_for('static', filename='img/mensualidades.jpg') }}"
+    alt="Mensualidades"
+    class="w-100 h-100"
+    style="object-fit:cover; object-position:center;"
+  />
+</div>
+
+<h2>Mensualidades</h2>
+
+<div class="card p-3 mb-3 shadow-sm">
+  <form class="row g-3" method="GET" action="{{ url_for('mensualidades') }}">
+    <div class="col-md-3">
+      <label class="form-label">Año</label>
+      <input type="number" class="form-control" name="anio" value="{{ anio }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">Mes</label>
+      <select class="form-select" name="mes">
+        {% for m in range(1,13) %}
+          <option value="{{ m }}" {{ 'selected' if m==mes else '' }}>{{ m }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3 d-flex align-items-end">
+      <button class="btn btn-primary" type="submit">Ver</button>
+    </div>
+  </form>
+  <small class="text-muted d-block mt-2">
+    Al cambiar año/mes se crean registros para todos los <b>Mensual</b> activos.
+  </small>
+</div>
+
+<div class="card p-3 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Cliente</th>
+          <th>Cuota ($)</th>
+          <th>Consultas cobradas ($)</th>
+          <th>Total ($)</th>
+          <th>Pagado ($)</th>
+          <th>Saldo ($)</th>
+          <th>Estado</th>
+          <th>Fecha pago</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in registros %}
+        <tr id="row-{{ r['mensualidad_id'] }}">
+          <td>
+            <strong>{{ r['nombre'] }}</strong><br>
+            <small class="text-muted">{{ r['cedula'] or '' }} · {{ r['telefono'] or '' }}</small>
+          </td>
+          <td>{{ r['monto_cuota'] is not none and ('%.2f'|format(r['monto_cuota'])) or '—' }}</td>
+          <td>{{ '%.2f'|format(r['extras'] or 0) }}</td>
+          <td>{{ '%.2f'|format(r['total'] or 0) }}</td>
+          <td>{{ '%.2f'|format(r['monto_pagado'] or 0) }}</td>
+          <td>{{ '%.2f'|format(r['saldo'] or 0) }}</td>
+          <td>
+            <span class="badge {{ 'bg-success' if r['pagado'] else 'bg-danger' }}" id="badge-{{ r['mensualidad_id'] }}">
+              {{ r['pagado'] and 'Pagado' or 'Impago' }}
+            </span>
+          </td>
+          <td id="fecha-{{ r['mensualidad_id'] }}">{{ r['fecha_pago'] or '' }}</td>
+          <td class="d-flex flex-wrap gap-1">
+            <button class="btn btn-sm btn-outline-primary" onclick="togglePago({{ r['mensualidad_id'] }})">Cambiar estado</button>
+            <a class="btn btn-sm btn-secondary" href="{{ url_for('mensualidad_gestionar', mensualidad_id=r['mensualidad_id']) }}">Gestionar</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+async function togglePago(id){
+  const resp = await fetch(`{{ url_for('mensualidad_toggle', mensualidad_id=0) }}`.replace('0', id), { method:'POST' });
+  if(!resp.ok){ alert('Error cambiando estado'); return; }
+  const data = await resp.json();
+  if(data.success){
+    const badge = document.getElementById('badge-'+id);
+    const fecha = document.getElementById('fecha-'+id);
+    if(data.pagado){
+      badge.classList.remove('bg-danger');
+      badge.classList.add('bg-success');
+      badge.innerText = 'Pagado';
+      const now = new Date();
+      fecha.innerText = now.toISOString().slice(0,16).replace('T',' ');
+    } else {
+      badge.classList.remove('bg-success');
+      badge.classList.add('bg-danger');
+      badge.innerText = 'Impago';
+      fecha.innerText = '';
+    }
+  }
+}
+</script>
+{% endblock %}

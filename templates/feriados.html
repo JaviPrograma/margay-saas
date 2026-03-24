@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+
+<!-- Banner superior (igual estilo que en Clientes) -->
+<div class="rounded-3 overflow-hidden shadow-sm mb-3">
+  <img
+    src="{{ url_for('static', filename='img/feriados.jpg') }}"
+    alt="Feriados"
+    class="w-100"
+    style="height: 280px; object-fit: cover; object-position: center;"
+  />
+</div>
+
+<h2>Feriados</h2>
+
+<div class="card p-3 mb-4 shadow-sm">
+  <form method="post" action="{{ url_for('feriados') }}">
+    <label class="form-label">Agregar feriados (YYYY-MM-DD), separados por coma o salto de línea</label>
+    <textarea name="fechas" rows="3" class="form-control" placeholder="2025-01-01, 2025-04-18"></textarea>
+    <button class="btn btn-primary mt-3">Guardar</button>
+  </form>
+</div>
+
+<div class="card p-3 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead><tr><th>Fecha</th><th>Día</th><th>Acciones</th></tr></thead>
+      <tbody>
+        {% for f in feriados %}
+        <tr>
+          <td>{{ f.fecha }}</td>
+          <td>{{ f.dow }}</td>
+          <td>
+            <form method="post" action="{{ url_for('feriado_eliminar', id=f.id) }}" onsubmit="return confirm('¿Eliminar feriado?');">
+              <button class="btn btn-sm btn-danger">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="text-center">No hay feriados cargados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

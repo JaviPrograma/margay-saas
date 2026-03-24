@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="text-center py-5">
+  <img src="{{ url_for('static', filename='img/logo.png') }}" alt="Margay" class="img-fluid" style="max-width: 420px;">
+  <div class="d-grid gap-2 col-12 col-sm-8 col-md-6 mx-auto mt-4">
+    <a href="{{ url_for('clientes') }}" class="btn btn-primary btn-lg">Gestionar Clientes</a>
+    <a href="{{ url_for('doctores') }}" class="btn btn-primary btn-lg">Gestionar Doctores</a>
+    <a href="{{ url_for('agenda_lista') }}" class="btn btn-primary btn-lg">Ver Agenda</a>
+    <a href="{{ url_for('agenda_nueva') }}" class="btn btn-primary btn-lg">Nueva Cita</a>
+    <a href="{{ url_for('facturacion') }}" class="btn btn-primary btn-lg">Facturación</a>
+    <a href="{{ url_for('recordatorios.dashboard') }}" class="btn btn-primary btn-lg">Recordatorios</a>
+  </div>
+</div>
+{% endblock %}

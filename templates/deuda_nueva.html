@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Registrar Deuda{% endblock %}
+
+{% block content %}
+<h1>Registrar Nueva Deuda</h1>
+
+<form method="post">
+    <div class="mb-3">
+        <label>Cliente</label>
+        <select name="cliente_id" required class="form-select">
+            <option value="">Seleccione...</option>
+            {% for c in clientes %}
+                <option value="{{ c['id'] }}">{{ c['nombre'] }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="mb-3">
+        <label>Mes (YYYY-MM)</label>
+        <input type="month" name="mes" required class="form-control" />
+    </div>
+    <div class="mb-3">
+        <label>Monto</label>
+        <input type="number" name="monto" step="0.01" required class="form-control" />
+    </div>
+    <div class="form-check mb-3">
+        <input type="checkbox" name="pagado" id="pagado" class="form-check-input" />
+        <label for="pagado" class="form-check-label">Pagado</label>
+    </div>
+    <div class="mb-3">
+        <label>Fecha de pago (si pagado)</label>
+        <input type="date" name="fecha_pago" class="form-control" />
+    </div>
+    <button type="submit" class="btn btn-primary">Guardar</button>
+    <a href="{{ url_for('deudas_lista') }}" class="btn btn-secondary ms-2">Cancelar</a>
+</form>
+{% endblock %}

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Particular — {{ cliente.nombre }} ({{ mes }}/{{ anio }})</h2>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card p-3 shadow-sm">
+      <div class="small text-muted">Total</div>
+      <div class="fs-5">${{ '%.2f'|format(total or 0) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 shadow-sm">
+      <div class="small text-muted">Cobrado</div>
+      <div class="fs-5">${{ '%.2f'|format(cobrado or 0) }}</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card p-3 shadow-sm">
+      <div class="small text-muted">Saldo</div>
+      <div class="fs-5">${{ '%.2f'|format(saldo or 0) }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card p-3 shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-striped align-middle">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Hora</th>
+          <th>Animal</th>
+          <th>Doctor</th>
+          <th>Motivo</th>
+          <th>Lugar</th>
+          <th>Precio ($)</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in citas %}
+        <tr>
+          <td>{{ c.fecha }}</td>
+          <td>{{ c.hora }}</td>
+          <td>{{ c.animal_nombre }}</td>
+          <td>{{ c.doctor_nombre }}</td>
+          <td>{{ c.motivo_nombre or '—' }}</td>
+          <td>{{ c.lugar or 'Clinica' }}</td>
+          <td>{{ (c.precio is not none) and ('%.2f'|format(c.precio)) or '—' }}</td>
+          <td style="min-width: 140px;">
+            <select class="form-select estado-pago-select" data-cita-id="{{ c.id }}">
+              <option value="Debe"   {% if c.estado_pago == 'Debe' %}selected{% endif %}>Debe</option>
+              <option value="Pagado" {% if c.estado_pago == 'Pagado' %}selected{% endif %}>Pagado</option>
+            </select>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8" class="text-center">Sin citas este mes.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<a class="btn btn-secondary mt-3" href="{{ url_for('particulares_resumen', anio=anio, mes=mes) }}">⬅ Volver</a>
+
+<script>
+document.querySelectorAll('.estado-pago-select').forEach(function(select) {
+  select.addEventListener('change', function() {
+    const citaId = this.getAttribute('data-cita-id');
+    const nuevoEstado = this.value;
+    fetch('/agenda/estado_pago/' + citaId, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json','X-Requested-With':'XMLHttpRequest'},
+      body: JSON.stringify({ estado_pago: nuevoEstado })
+    })
+    .then(r=>r.json())
+    .then(j=>{
+      if(j.success){
+        this.classList.add('is-valid');
+        setTimeout(()=>this.classList.remove('is-valid'),1500);
+        // Si querés actualizar totales al toque:
+        // location.reload();
+      } else {
+        alert('Error al actualizar el estado');
+      }
+    })
+    .catch(()=>alert('Error al actualizar el estado'));
+  });
+});
+</script>
+{% endblock %}

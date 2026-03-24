@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+  <h2>Agregar nueva cita</h2>
+
+  <div class="alert alert-secondary" role="alert">
+    Al guardar la cita se abrirá <b>WhatsApp Web</b> con el mensaje listo para enviar al cliente.
+  </div>
+
+  <form method="POST" action="{{ url_for('agenda_nueva') }}">
+    <div class="mb-3">
+      <label for="cliente_id" class="form-label">Cliente</label>
+
+      <!-- Buscador por nombre o cédula (filtra el select de abajo) -->
+      <input type="text"
+             id="buscador_cliente"
+             class="form-control mb-2"
+             placeholder="Buscar por nombre o cédula..." />
+
+      <select class="form-select" id="cliente_id" name="cliente_id" required>
+        <option value="" {% if not preset.cliente_id %}selected{% endif %} disabled>Seleccione un cliente</option>
+        {% for cliente in clientes %}
+          <option value="{{ cliente.id }}" {% if preset.cliente_id == cliente.id %}selected{% endif %}>
+            {{ cliente.nombre }}{% if cliente.cedula %} — {{ cliente.cedula }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+      <div class="form-text">Si la cita es a domicilio se usará la dirección del cliente.</div>
+    </div>
+
+    <div class="mb-3">
+      <label for="animal_id" class="form-label">Animal</label>
+      <select class="form-select" id="animal_id" name="animal_id" required {{ '' if preset.cliente_id else 'disabled' }}>
+        <option value="">{{ preset.cliente_id and 'Cargando…' or 'Seleccione un cliente primero' }}</option>
+      </select>
+    </div>
+
+    <div class="mb-3">
+      <label for="doctor_id" class="form-label">Doctor</label>
+      <select class="form-select" id="doctor_id" name="doctor_id" required>
+        <option value="" {% if not preset.doctor_id %}selected{% endif %} disabled>Seleccione un doctor</option>
+        {% for doctor in doctores %}
+          <option value="{{ doctor.id }}" {% if preset.doctor_id == doctor.id %}selected{% endif %}>{{ doctor.nombre }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label for="fecha" class="form-label">Fecha</label>
+        <input type="date" class="form-control" id="fecha" name="fecha" required value="{{ preset.fecha or '' }}">
+      </div>
+      <div class="col-md-4">
+        <label for="hora" class="form-label">Hora</label>
+        <input type="time" class="form-control" id="hora" name="hora" step="300" required value="{{ preset.hora or '' }}">
+      </div>
+      <div class="col-md-4">
+        <label for="lugar" class="form-label">Lugar</label>
+        <select class="form-select" id="lugar" name="lugar" required>
+          {% set lug = preset.lugar or 'Clinica' %}
+          <option value="Clinica"  {{ 'selected' if lug=='Clinica' else '' }}>Clínica</option>
+          <option value="Domicilio" {{ 'selected' if lug=='Domicilio' else '' }}>Domicilio</option>
+        </select>
+        <div class="form-text">Socios: consulta en clínica dentro de horario → $0</div>
+      </div>
+    </div>
+
+    <div class="mb-3 mt-3">
+      <label for="motivo_id" class="form-label">Motivo</label>
+      <select class="form-select" id="motivo_id" name="motivo_id" required>
+        <option value="" {% if not preset.motivo_id %}selected{% endif %} disabled>Seleccione motivo</option>
+        {% for motivo in motivos %}
+          <option value="{{ motivo.id }}" {% if preset.motivo_id == motivo.id %}selected{% endif %}>
+            {{ motivo.nombre }} ({{ motivo.duracion_minutos }} min)
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label for="estado_pago" class="form-label">Estado de Pago</label>
+        <select class="form-select" id="estado_pago" name="estado_pago" required>
+          <option value="Debe"   selected>Debe</option>
+          <option value="Pagado">Pagado</option>
+        </select>
+      </div>
+      <div class="col-md-6 d-flex align-items-end">
+        <div class="alert alert-info w-100 mb-0" id="precioPreview">Precio: —</div>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary mt-3">Agregar Cita</button>
+    <a href="{{ url_for('agenda_lista') }}" class="btn btn-secondary mt-3">Volver a lista</a>
+  </form>
+</div>
+
+<script>
+function recalcPrecio(){
+  const cliente = document.getElementById('cliente_id').value;
+  const motivo = document.getElementById('motivo_id').value;
+  const fecha  = document.getElementById('fecha').value;
+  const hora   = document.getElementById('hora').value;
+  const lugar  = document.getElementById('lugar').value;
+  if(!cliente || !motivo || !fecha || !hora) return;
+
+  const url = new URL('{{ url_for("api_precio_cita") }}', window.location.origin);
+  url.searchParams.set('cliente_id', cliente);
+  url.searchParams.set('motivo_id', motivo);
+  url.searchParams.set('fecha', fecha);
+  url.searchParams.set('hora', hora);
+  url.searchParams.set('lugar', lugar);
+
+  fetch(url).then(r=>r.json()).then(j=>{
+    if(j.ok){
+      const p = j.precio;
+      document.getElementById('precioPreview').textContent = 'Precio: ' + (p===0 ? '$0 (cubierto)' : ('$'+p));
+      if(p===0){ document.getElementById('estado_pago').value='Pagado'; }
+    }
+  });
+}
+['cliente_id','motivo_id','fecha','hora','lugar'].forEach(id=>{
+  const el = document.getElementById(id);
+  el && el.addEventListener('change', recalcPrecio);
+});
+
+// Cargar animales cuando cambia cliente
+document.getElementById("cliente_id").addEventListener("change", function() {
+  var clienteId = this.value;
+  var animalSelect = document.getElementById("animal_id");
+  animalSelect.innerHTML = '<option>Cargando...</option>';
+  animalSelect.disabled = true;
+
+  fetch('/api/animales/' + clienteId)
+    .then(response => response.json())
+    .then(data => {
+      animalSelect.disabled = false;
+      animalSelect.innerHTML = '<option value="" selected disabled>Seleccione un animal</option>';
+      data.forEach(function(animal) {
+        var option = document.createElement("option");
+        option.value = animal.id;
+        option.text = animal.nombre;
+        animalSelect.appendChild(option);
+      });
+      recalcPrecio();
+    })
+    .catch(() => {
+      animalSelect.disabled = true;
+      animalSelect.innerHTML = '<option>Error al cargar animales</option>';
+    });
+});
+
+// === Buscador por nombre o cédula ===
+const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula}, ...]
+(function(){
+  const input = document.getElementById('buscador_cliente');
+  const select = document.getElementById('cliente_id');
+
+  function normalizar(s){
+    return (s || '').toString().toLowerCase();
+  }
+
+  function render(options, keepValue){
+    const curr = keepValue ? select.value : '';
+    select.innerHTML = '<option value="" disabled '+(curr?'':'selected')+'>Seleccione un cliente</option>';
+    options.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.nombre + (c.cedula ? ' — ' + c.cedula : '');
+      if(curr && String(curr) === String(c.id)) opt.selected = true;
+      select.appendChild(opt);
+    });
+  }
+
+  render(BASE, true);
+
+  input.addEventListener('input', () => {
+    const q = normalizar(input.value);
+    if(!q){ render(BASE, true); return; }
+    const fil = BASE.filter(c => {
+      return normalizar(c.nombre).includes(q) || normalizar(c.cedula).includes(q);
+    });
+    render(fil, false);
+  });
+})();
+
+// PREFILL desde querystring (servidor pasa 'preset')
+const PRESET = {{ (preset or {})|tojson }};
+document.addEventListener('DOMContentLoaded', () => {
+  if(PRESET.cliente_id){
+    const selC = document.getElementById('cliente_id');
+    selC.value = String(PRESET.cliente_id);
+    // disparo carga de animales y selecciono el preset cuando lleguen
+    const selA = document.getElementById('animal_id');
+    fetch('/api/animales/' + PRESET.cliente_id)
+      .then(r=>r.json())
+      .then(list=>{
+        selA.disabled = false;
+        selA.innerHTML = '<option value="" disabled>Seleccione un animal</option>';
+        list.forEach(a=>{
+          const op = document.createElement('option');
+          op.value = a.id; op.textContent = a.nombre;
+          if(PRESET.animal_id && Number(PRESET.animal_id)===Number(a.id)) op.selected = true;
+          selA.appendChild(op);
+        });
+      });
+  }
+  if(PRESET.doctor_id){ document.getElementById('doctor_id').value = String(PRESET.doctor_id); }
+  if(PRESET.motivo_id){ document.getElementById('motivo_id').value = String(PRESET.motivo_id); }
+  if(PRESET.fecha){ document.getElementById('fecha').value = PRESET.fecha; }
+  if(PRESET.hora){ document.getElementById('hora').value = PRESET.hora; }
+  if(PRESET.lugar){ document.getElementById('lugar').value = PRESET.lugar; }
+  setTimeout(recalcPrecio, 150);
+});
+</script>
+{% endblock %}
