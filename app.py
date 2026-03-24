@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, abort, send_from_directory, jsonify, flash, session, g
 import sqlite3
-import os, re, sqlite3
+import os, re, sqlite3, shutil
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta, time, date
 from urllib.parse import quote
@@ -16,20 +16,26 @@ CLINIC_NAME = "MARGAY"
 CLINIC_WHATSAPP_RETURN = "agenda_lista"  # adónde volver luego de abrir WhatsApp
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DB_SOURCE = os.path.join(BASE_DIR, 'veterinaria.db')
-DATABASE = os.environ.get('DATABASE_PATH', '/tmp/veterinaria.db')
+# Base de datos: en Render conviene /tmp; en local usa veterinaria.db
+_database_env = os.environ.get('DATABASE_PATH')
+if _database_env:
+    DATABASE = _database_env
+elif os.environ.get('RENDER') or os.environ.get('PORT'):
+    DATABASE = '/tmp/veterinaria.db'
+else:
+    DATABASE = 'veterinaria.db'
 # Opcional: clave simple para el programador de tareas
 app.config.setdefault('TASK_SECRET', 'margay-task')
 
+# Si estamos en un entorno efímero (Render) y no existe la DB todavía,
+# copiamos la base incluida en el proyecto para arrancar con datos y esquema.
+if DATABASE.startswith('/tmp/') and not os.path.exists(DATABASE):
+    _seed_db = os.path.join(os.path.dirname(__file__), 'veterinaria.db')
+    if os.path.exists(_seed_db):
+        shutil.copy(_seed_db, DATABASE)
+
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
-
-# En Render conviene trabajar sobre /tmp. Si hay una base incluida en el proyecto
-# y todavía no existe la base de ejecución, la copiamos para arrancar con datos.
-if DATABASE.startswith('/tmp/') and not os.path.exists(DATABASE) and os.path.exists(DEFAULT_DB_SOURCE):
-    import shutil
-    shutil.copyfile(DEFAULT_DB_SOURCE, DATABASE)
 
 PUBLIC_ENDPOINTS = {'login', 'setup_saas', 'static'}
 
@@ -859,7 +865,7 @@ def cliente_nuevo():
         conn.execute(
             """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, activo, cuota_mensual, fecha_afiliacion, empresa_id)
                VALUES (?, ?, ?, ?, 0, ?, 1, ?, ?, ?)""",
-            (nombre, telefono, cedula, tipo, direccion, cuota_mensual, fecha_af),
+            (nombre, telefono, cedula, tipo, direccion, cuota_mensual, fecha_af, current_empresa_id()),
         )
         cliente_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()['id']
 
@@ -1181,7 +1187,7 @@ def motivo_nuevo():
     conn = get_db()
     conn.execute(
         "INSERT INTO motivos (nombre, duracion_minutos, precio_mensual, precio_particular, tipo, empresa_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (nombre, duracion, pm, pp, tipo),
+        (nombre, duracion, pm, pp, tipo, current_empresa_id()),
     )
     conn.commit()
     conn.close()
@@ -1301,7 +1307,7 @@ def agenda_nueva():
         cur.execute("""
             INSERT INTO agenda (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id, estado_pago, precio, lugar, atendida, empresa_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-        """, (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id, estado_pago, precio_cita, lugar))
+        """, (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id, estado_pago, precio_cita, lugar, current_empresa_id()))
 
         cita_id = cur.lastrowid
         _actualizar_flag_deudor(conn, int(cliente_id))
