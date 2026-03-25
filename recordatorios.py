@@ -4,7 +4,20 @@ import sqlite3, threading, time, datetime as dt, os, smtplib, ssl
 from email.message import EmailMessage
 
 bp = Blueprint("recordatorios", __name__, url_prefix="/recordatorios")
-DB_PATH = os.environ.get("DATABASE_PATH", "/tmp/veterinaria.db")
+_db_env = os.environ.get("DATABASE_PATH")
+if _db_env:
+    DB_PATH = _db_env
+elif os.environ.get("RENDER") or os.environ.get("PORT"):
+    DB_PATH = "/tmp/veterinaria.db"
+else:
+    DB_PATH = "veterinaria.db"
+
+# En Render, si la base en /tmp no existe todavía, copiamos la incluida en el proyecto
+if DB_PATH.startswith("/tmp/") and not os.path.exists(DB_PATH):
+    _seed_db = os.path.join(os.path.dirname(__file__), "veterinaria.db")
+    if os.path.exists(_seed_db):
+        import shutil
+        shutil.copy(_seed_db, DB_PATH)
 CLINICA = "VetCloud"
 BATCH_SIZE = 20
 PAUSA_ENTRE_ENVIOS = 0.6
@@ -21,8 +34,14 @@ def empresa_actual():
     return session.get('empresa_id')
 
 
+def _ensure_column(cur, table, colname, coldef):
+    cols = [r[1] for r in cur.execute(f"PRAGMA table_info({table})").fetchall()]
+    if colname not in cols:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
+
 def init_tables():
     conn = db_conn(); cur = conn.cursor()
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS reminder_config (
         empresa_id INTEGER PRIMARY KEY,
@@ -51,10 +70,11 @@ def init_tables():
         smtp_from TEXT,
         smtp_from_name TEXT
     )""")
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS reminder_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        empresa_id INTEGER NOT NULL,
+        empresa_id INTEGER NOT NULL DEFAULT 1,
         tipo TEXT NOT NULL,
         cliente_id INTEGER,
         animal_id INTEGER,
@@ -70,6 +90,53 @@ def init_tables():
         last_try_at TEXT,
         enviado_en TEXT
     )""")
+
+    # Migraciones suaves para bases viejas
+    _ensure_column(cur, 'reminder_config', 'empresa_id', "empresa_id INTEGER DEFAULT 1")
+    _ensure_column(cur, 'reminder_config', 'mensual_enabled', "mensual_enabled INTEGER DEFAULT 1")
+    _ensure_column(cur, 'reminder_config', 'mensual_template', "mensual_template TEXT")
+    _ensure_column(cur, 'reminder_config', 'mensual_hora', "mensual_hora TEXT DEFAULT '10:00'")
+    _ensure_column(cur, 'reminder_config', 'mensual_dia_mes', "mensual_dia_mes INTEGER DEFAULT 1")
+    _ensure_column(cur, 'reminder_config', 'vacunas_enabled', "vacunas_enabled INTEGER DEFAULT 1")
+    _ensure_column(cur, 'reminder_config', 'vacunas_template', "vacunas_template TEXT")
+    _ensure_column(cur, 'reminder_config', 'vacunas_hora', "vacunas_hora TEXT DEFAULT '10:00'")
+    _ensure_column(cur, 'reminder_config', 'vacunas_dias_antes', "vacunas_dias_antes INTEGER DEFAULT 7")
+    _ensure_column(cur, 'reminder_config', 'despa_enabled', "despa_enabled INTEGER DEFAULT 0")
+    _ensure_column(cur, 'reminder_config', 'despa_template', "despa_template TEXT")
+    _ensure_column(cur, 'reminder_config', 'despa_hora', "despa_hora TEXT DEFAULT '10:00'")
+    _ensure_column(cur, 'reminder_config', 'despa_dias_antes', "despa_dias_antes INTEGER DEFAULT 7")
+    _ensure_column(cur, 'reminder_config', 'despa_intervalo_dias', "despa_intervalo_dias INTEGER DEFAULT 90")
+    _ensure_column(cur, 'reminder_config', 'part_enabled', "part_enabled INTEGER DEFAULT 1")
+    _ensure_column(cur, 'reminder_config', 'part_template', "part_template TEXT")
+    _ensure_column(cur, 'reminder_config', 'part_hora', "part_hora TEXT DEFAULT '10:00'")
+    _ensure_column(cur, 'reminder_config', 'part_dia_mes', "part_dia_mes INTEGER DEFAULT 5")
+    _ensure_column(cur, 'reminder_config', 'smtp_host', "smtp_host TEXT")
+    _ensure_column(cur, 'reminder_config', 'smtp_port', "smtp_port INTEGER DEFAULT 587")
+    _ensure_column(cur, 'reminder_config', 'smtp_user', "smtp_user TEXT")
+    _ensure_column(cur, 'reminder_config', 'smtp_pass', "smtp_pass TEXT")
+    _ensure_column(cur, 'reminder_config', 'smtp_tls', "smtp_tls INTEGER DEFAULT 1")
+    _ensure_column(cur, 'reminder_config', 'smtp_from', "smtp_from TEXT")
+    _ensure_column(cur, 'reminder_config', 'smtp_from_name', "smtp_from_name TEXT")
+
+    _ensure_column(cur, 'reminder_queue', 'empresa_id', "empresa_id INTEGER NOT NULL DEFAULT 1")
+    _ensure_column(cur, 'reminder_queue', 'tipo', "tipo TEXT")
+    _ensure_column(cur, 'reminder_queue', 'cliente_id', "cliente_id INTEGER")
+    _ensure_column(cur, 'reminder_queue', 'animal_id', "animal_id INTEGER")
+    _ensure_column(cur, 'reminder_queue', 'vacuna_id', "vacuna_id INTEGER")
+    _ensure_column(cur, 'reminder_queue', 'referencia_fecha', "referencia_fecha TEXT")
+    _ensure_column(cur, 'reminder_queue', 'email_destino', "email_destino TEXT")
+    _ensure_column(cur, 'reminder_queue', 'asunto', "asunto TEXT")
+    _ensure_column(cur, 'reminder_queue', 'mensaje', "mensaje TEXT")
+    _ensure_column(cur, 'reminder_queue', 'programado_en', "programado_en TEXT")
+    _ensure_column(cur, 'reminder_queue', 'estado', "estado TEXT DEFAULT 'pendiente'")
+    _ensure_column(cur, 'reminder_queue', 'intentos', "intentos INTEGER DEFAULT 0")
+    _ensure_column(cur, 'reminder_queue', 'last_error', "last_error TEXT")
+    _ensure_column(cur, 'reminder_queue', 'last_try_at', "last_try_at TEXT")
+    _ensure_column(cur, 'reminder_queue', 'enviado_en', "enviado_en TEXT")
+
+    cur.execute("UPDATE reminder_config SET empresa_id = 1 WHERE empresa_id IS NULL")
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_reminder_config_empresa ON reminder_config(empresa_id)")
+    cur.execute("UPDATE reminder_queue SET empresa_id = 1 WHERE empresa_id IS NULL")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_queue_estado_empresa ON reminder_queue(empresa_id, estado, programado_en)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_mensual ON reminder_queue(empresa_id, tipo, cliente_id, referencia_fecha)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_vacuna ON reminder_queue(empresa_id, tipo, vacuna_id, referencia_fecha)")
