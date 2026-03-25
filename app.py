@@ -1367,19 +1367,27 @@ def agenda_lista():
         JOIN animales an ON a.animal_id = an.id
         JOIN doctores d ON a.doctor_id = d.id
         LEFT JOIN motivos m ON a.motivo_id = m.id
+        WHERE a.empresa_id = ?
     """
-    condiciones, params = [], []
-    if fecha: condiciones.append("a.fecha = ?"); params.append(fecha)
-    if doctor_id: condiciones.append("a.doctor_id = ?"); params.append(doctor_id)
-    if cliente_id: condiciones.append("a.cliente_id = ?"); params.append(cliente_id)
+    params = [current_empresa_id()]
+
+    if fecha:
+        query += " AND a.fecha = ?"
+        params.append(fecha)
+    if doctor_id:
+        query += " AND a.doctor_id = ?"
+        params.append(doctor_id)
+    if cliente_id:
+        query += " AND a.cliente_id = ?"
+        params.append(cliente_id)
     if estado == "Pendiente":
-        condiciones.append("a.atendida = 0")
+        query += " AND a.atendida = 0"
     elif estado == "Atendidas":
-        condiciones.append("a.atendida = 1")
-    if condiciones: query += " WHERE " + " AND ".join(condiciones)
+        query += " AND a.atendida = 1"
+
     query += " ORDER BY a.fecha DESC, a.hora DESC"
 
-    citas = conn.execute(query, _query_params(params)).fetchall()
+    citas = conn.execute(query, params).fetchall()
     doctores = conn.execute("SELECT id, nombre FROM doctores WHERE empresa_id=?", (current_empresa_id(),)).fetchall()
     clientes = conn.execute("SELECT id, nombre FROM clientes WHERE empresa_id=?", (current_empresa_id(),)).fetchall()
     conn.close()
