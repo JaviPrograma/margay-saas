@@ -252,6 +252,7 @@ def init_db():
     # Clientes extras
     for alter in [
         "ALTER TABLE clientes ADD COLUMN direccion TEXT",
+        "ALTER TABLE clientes ADD COLUMN email TEXT",
         "ALTER TABLE clientes ADD COLUMN activo INTEGER DEFAULT 1",
         "ALTER TABLE clientes ADD COLUMN cuota_mensual REAL",
         "ALTER TABLE clientes ADD COLUMN fecha_afiliacion TEXT"
@@ -849,6 +850,7 @@ def cliente_nuevo():
     cedula = (request.form.get("cedula", "") or "").strip()
     tipo = request.form.get("tipo", "Particular").strip()
     direccion = request.form.get("direccion", "").strip()
+    email = (request.form.get("email", "") or "").strip().lower()
     cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
 
     conn = get_db()
@@ -863,9 +865,9 @@ def cliente_nuevo():
     try:
         fecha_af = datetime.now().strftime("%Y-%m-%d") if tipo == "Mensual" else None
         conn.execute(
-            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, activo, cuota_mensual, fecha_afiliacion, empresa_id)
-               VALUES (?, ?, ?, ?, 0, ?, 1, ?, ?, ?)""",
-            (nombre, telefono, cedula, tipo, direccion, cuota_mensual, fecha_af, current_empresa_id()),
+            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, empresa_id)
+               VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?)""",
+            (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, current_empresa_id()),
         )
         cliente_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()['id']
 
@@ -895,6 +897,7 @@ def cliente_editar(id):
         cedula = (request.form.get("cedula", "") or "").strip()
         tipo = request.form.get("tipo", "Particular").strip()
         direccion = request.form.get("direccion", "").strip()
+        email = (request.form.get("email", "") or "").strip().lower()
         cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
 
         prev = conn.execute("SELECT tipo FROM clientes WHERE id=? AND empresa_id=?", (id, current_empresa_id())).fetchone()
@@ -914,9 +917,9 @@ def cliente_editar(id):
 
             conn.execute(
                 """UPDATE clientes
-                   SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
+                   SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
                    WHERE id=?""",
-                (nombre, telefono, cedula, tipo, direccion, cuota_mensual, fecha_af, id),
+                (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, id),
             )
 
             if prev_tipo != "Mensual" and tipo == "Mensual":
@@ -1020,10 +1023,11 @@ def animal_nuevo(cliente_id):
     especie = request.form.get("especie", "").strip()
     raza = request.form.get("raza", "").strip()
     fecha_nacimiento = request.form.get("fecha_nacimiento", "").strip()
+    ultima_desparasitacion = request.form.get("ultima_desparasitacion", "").strip()
     conn = get_db()
     conn.execute(
-        "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, empresa_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (cliente_id, nombre, especie, raza, fecha_nacimiento, current_empresa_id()),
+        "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, empresa_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, current_empresa_id()),
     )
     conn.commit()
     conn.close()
@@ -1037,9 +1041,10 @@ def animal_editar(id):
         especie = request.form.get("especie", "").strip()
         raza = request.form.get("raza", "").strip()
         fecha_nacimiento = request.form.get("fecha_nacimiento", "").strip()
+        ultima_desparasitacion = request.form.get("ultima_desparasitacion", "").strip()
         conn.execute(
-            "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=? WHERE id=? AND empresa_id=?",
-            (nombre, especie, raza, fecha_nacimiento, id, current_empresa_id()),
+            "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=?, ultima_desparasitacion=? WHERE id=? AND empresa_id=?",
+            (nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, id, current_empresa_id()),
         )
         conn.commit()
         cliente_id = request.args.get("cliente_id")

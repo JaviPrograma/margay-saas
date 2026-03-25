@@ -32,6 +32,10 @@
       <label for="fecha_nacimiento" class="form-label">Fecha de Nacimiento</label>
       <input id="fecha_nacimiento" name="fecha_nacimiento" type="date" class="form-control" value="{{ animal_edit and animal_edit['fecha_nacimiento'] or '' }}">
     </div>
+    <div class="mb-3">
+      <label for="ultima_desparasitacion" class="form-label">Última desparasitación</label>
+      <input id="ultima_desparasitacion" name="ultima_desparasitacion" type="date" class="form-control" value="{{ animal_edit and animal_edit['ultima_desparasitacion'] or '' }}">
+    </div>
     <button type="submit" class="btn btn-primary">{{ animal_edit and 'Actualizar' or 'Agregar' }}</button>
     {% if animal_edit %}
     <a href="{{ url_for('animales', cliente_id=cliente['id']) }}" class="btn btn-secondary ms-2">Cancelar</a>
@@ -46,6 +50,7 @@
       <th>Especie</th>
       <th>Raza</th>
       <th>Fecha Nac.</th>
+      <th>Últ. desparasitación</th>
       <th>Acciones</th>
     </tr>
   </thead>
@@ -56,6 +61,7 @@
       <td>{{ animal['especie'] }}</td>
       <td>{{ animal['raza'] }}</td>
       <td>{{ animal['fecha_nacimiento'] }}</td>
+      <td>{{ animal['ultima_desparasitacion'] or '' }}</td>
       <td>
         <a href="{{ url_for('historia', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-primary">Historia Clínica</a>
         <a href="{{ url_for('vacunas', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-success">Vacunas</a>
@@ -64,7 +70,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="text-center">No hay animales aún.</td></tr>
+    <tr><td colspan="6" class="text-center">No hay animales aún.</td></tr>
     {% endfor %}
   </tbody>
 </table>

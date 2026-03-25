@@ -1,184 +1,94 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="container py-4">
-  <h2 class="mb-3">Recordatorios por WhatsApp</h2>
+  <h2 class="mb-3">Recordatorios por Correo</h2>
 
-  <form class="row g-2 mb-4" method="POST" action="{{ url_for('recordatorios.config') }}">
+  <form class="row g-3 mb-4" method="POST" action="{{ url_for('recordatorios.config') }}">
     <div class="col-12"><h5>Configuración automática</h5></div>
 
-    <div class="col-12 col-md-4">
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" name="mensual_enabled" id="mensual_enabled" {% if cfg and cfg['mensual_enabled'] %}checked{% endif %}>
-        <label class="form-check-label" for="mensual_enabled">Mensualidades</label>
-      </div>
-      <label class="form-label mt-2">Plantilla / Texto</label>
-      <input class="form-control" name="mensual_template" value="{{ (cfg['mensual_template'] or '') if cfg else '' }}" placeholder="Hola {CLIENTE}... {MES}/{ANIO}">
-      <div class="row mt-2">
-        <div class="col">
-          <label class="form-label">Día del mes</label>
-          <input type="number" min="1" max="28" class="form-control" name="mensual_dia_mes" value="{{ cfg['mensual_dia_mes'] if cfg else 1 }}">
-        </div>
-        <div class="col">
-          <label class="form-label">Hora</label>
-          <input type="time" class="form-control" name="mensual_hora" value="{{ cfg['mensual_hora'] if cfg else '10:00' }}">
+    <div class="col-12 col-lg-6">
+      <div class="card p-3 h-100">
+        <h6>SMTP / Correo saliente</h6>
+        <div class="row g-2">
+          <div class="col-md-6"><label class="form-label">Servidor SMTP</label><input class="form-control" name="smtp_host" value="{{ cfg['smtp_host'] if cfg else '' }}" placeholder="smtp.tudominio.com"></div>
+          <div class="col-md-3"><label class="form-label">Puerto</label><input class="form-control" name="smtp_port" type="number" value="{{ cfg['smtp_port'] if cfg else 587 }}"></div>
+          <div class="col-md-3 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="smtp_tls" id="smtp_tls" {% if cfg and cfg['smtp_tls'] %}checked{% endif %}><label class="form-check-label" for="smtp_tls">Usar TLS</label></div></div>
+          <div class="col-md-6"><label class="form-label">Usuario SMTP</label><input class="form-control" name="smtp_user" value="{{ cfg['smtp_user'] if cfg else '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Contraseña SMTP</label><input class="form-control" name="smtp_pass" type="password" value="{{ cfg['smtp_pass'] if cfg else '' }}"></div>
+          <div class="col-md-6"><label class="form-label">Remitente</label><input class="form-control" name="smtp_from" value="{{ cfg['smtp_from'] if cfg else '' }}" placeholder="avisos@tudominio.com"></div>
+          <div class="col-md-6"><label class="form-label">Nombre remitente</label><input class="form-control" name="smtp_from_name" value="{{ cfg['smtp_from_name'] if cfg else '' }}" placeholder="VetCloud / Tu veterinaria"></div>
         </div>
       </div>
     </div>
 
-    <div class="col-12 col-md-4">
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" name="vacunas_enabled" id="vacunas_enabled" {% if cfg and cfg['vacunas_enabled'] %}checked{% endif %}>
-        <label class="form-check-label" for="vacunas_enabled">Vacunas</label>
-      </div>
-      <label class="form-label mt-2">Plantilla / Texto</label>
-      <input class="form-control" name="vacunas_template" value="{{ (cfg['vacunas_template'] or '') if cfg else '' }}" placeholder="Hola {CLIENTE}...\n{LISTADO}">
-      <div class="row mt-2">
-        <div class="col">
-          <label class="form-label">Días antes</label>
-          <input type="number" min="1" max="60" class="form-control" name="vacunas_dias_antes" value="{{ cfg['vacunas_dias_antes'] if cfg else 7 }}">
-        </div>
-        <div class="col">
-          <label class="form-label">Hora</label>
-          <input type="time" class="form-control" name="vacunas_hora" value="{{ cfg['vacunas_hora'] if cfg else '10:00' }}">
-        </div>
+    <div class="col-12 col-lg-6">
+      <div class="card p-3 h-100">
+        <h6>Mensualidades</h6>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="mensual_enabled" id="mensual_enabled" {% if cfg and cfg['mensual_enabled'] %}checked{% endif %}><label class="form-check-label" for="mensual_enabled">Enviar a clientes mensuales</label></div>
+        <label class="form-label mt-2">Plantilla</label>
+        <textarea class="form-control" name="mensual_template" rows="3">{{ (cfg['mensual_template'] or '') if cfg else '' }}</textarea>
+        <div class="row mt-2 g-2"><div class="col"><label class="form-label">Día del mes</label><input type="number" min="1" max="28" class="form-control" name="mensual_dia_mes" value="{{ cfg['mensual_dia_mes'] if cfg else 1 }}"></div><div class="col"><label class="form-label">Hora</label><input type="time" class="form-control" name="mensual_hora" value="{{ cfg['mensual_hora'] if cfg else '10:00' }}"></div></div>
       </div>
     </div>
 
-    <div class="col-12 col-md-4">
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" name="part_enabled" id="part_enabled" {% if cfg and cfg['part_enabled'] %}checked{% endif %}>
-        <label class="form-check-label" for="part_enabled">Impagos (Particulares)</label>
-      </div>
-      <label class="form-label mt-2">Plantilla / Texto</label>
-      <input class="form-control" name="part_template" value="{{ (cfg['part_template'] or '') if cfg else '' }}" placeholder="Hola {CLIENTE}...">
-      <div class="row mt-2">
-        <div class="col">
-          <label class="form-label">Día del mes</label>
-          <input type="number" min="1" max="28" class="form-control" name="part_dia_mes" value="{{ cfg['part_dia_mes'] if cfg else 5 }}">
-        </div>
-        <div class="col">
-          <label class="form-label">Hora</label>
-          <input type="time" class="form-control" name="part_hora" value="{{ cfg['part_hora'] if cfg else '10:00' }}">
-        </div>
+    <div class="col-12 col-lg-4">
+      <div class="card p-3 h-100">
+        <h6>Vacunas</h6>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="vacunas_enabled" id="vacunas_enabled" {% if cfg and cfg['vacunas_enabled'] %}checked{% endif %}><label class="form-check-label" for="vacunas_enabled">Enviar por vencimiento</label></div>
+        <label class="form-label mt-2">Plantilla</label>
+        <textarea class="form-control" name="vacunas_template" rows="3">{{ (cfg['vacunas_template'] or '') if cfg else '' }}</textarea>
+        <div class="row mt-2 g-2"><div class="col"><label class="form-label">Días antes</label><input type="number" min="1" max="60" class="form-control" name="vacunas_dias_antes" value="{{ cfg['vacunas_dias_antes'] if cfg else 7 }}"></div><div class="col"><label class="form-label">Hora</label><input type="time" class="form-control" name="vacunas_hora" value="{{ cfg['vacunas_hora'] if cfg else '10:00' }}"></div></div>
       </div>
     </div>
 
-    <div class="col-12 mt-3">
-      <button class="btn btn-primary">Guardar configuración</button>
-      <a class="btn btn-outline-success" href="{{ url_for('recordatorios.enviar_pendientes') }}">Procesar pendientes ahora</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('recordatorios.diag') }}" target="_blank">Diagnóstico</a>
+    <div class="col-12 col-lg-4">
+      <div class="card p-3 h-100">
+        <h6>Desparasitación</h6>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="despa_enabled" id="despa_enabled" {% if cfg and cfg['despa_enabled'] %}checked{% endif %}><label class="form-check-label" for="despa_enabled">Enviar por vencimiento</label></div>
+        <label class="form-label mt-2">Plantilla</label>
+        <textarea class="form-control" name="despa_template" rows="3">{{ (cfg['despa_template'] or '') if cfg else '' }}</textarea>
+        <div class="row mt-2 g-2"><div class="col"><label class="form-label">Días antes</label><input type="number" min="1" max="60" class="form-control" name="despa_dias_antes" value="{{ cfg['despa_dias_antes'] if cfg else 7 }}"></div><div class="col"><label class="form-label">Hora</label><input type="time" class="form-control" name="despa_hora" value="{{ cfg['despa_hora'] if cfg else '10:00' }}"></div></div>
+        <div class="mt-2"><label class="form-label">Intervalo (días desde última desparasitación)</label><input type="number" min="1" max="365" class="form-control" name="despa_intervalo_dias" value="{{ cfg['despa_intervalo_dias'] if cfg else 90 }}"></div>
+      </div>
     </div>
+
+    <div class="col-12 col-lg-4">
+      <div class="card p-3 h-100">
+        <h6>Impagos (Particulares)</h6>
+        <div class="form-check"><input class="form-check-input" type="checkbox" name="part_enabled" id="part_enabled" {% if cfg and cfg['part_enabled'] %}checked{% endif %}><label class="form-check-label" for="part_enabled">Solo clientes particulares</label></div>
+        <label class="form-label mt-2">Plantilla</label>
+        <textarea class="form-control" name="part_template" rows="3">{{ (cfg['part_template'] or '') if cfg else '' }}</textarea>
+        <div class="row mt-2 g-2"><div class="col"><label class="form-label">Día del mes</label><input type="number" min="1" max="28" class="form-control" name="part_dia_mes" value="{{ cfg['part_dia_mes'] if cfg else 5 }}"></div><div class="col"><label class="form-label">Hora</label><input type="time" class="form-control" name="part_hora" value="{{ cfg['part_hora'] if cfg else '10:00' }}"></div></div>
+      </div>
+    </div>
+
+    <div class="col-12"><button class="btn btn-primary">Guardar configuración</button> <a class="btn btn-outline-success" href="{{ url_for('recordatorios.enviar_pendientes') }}">Procesar pendientes ahora</a> <a class="btn btn-outline-secondary" href="{{ url_for('recordatorios.diag') }}" target="_blank">Diagnóstico</a></div>
   </form>
 
   <div class="row g-3 mb-4">
     <div class="col-12 col-lg-6">
       <h5>Pendientes / Errores</h5>
-      <div class="table-responsive">
-        <table class="table table-sm align-middle">
-          <thead>
-            <tr>
-              <th>#</th><th>Fecha</th><th>Cliente</th><th>Tel</th><th>Mensaje</th><th>Estado</th><th>Intentos</th><th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for r in pendientes %}
-            <tr>
-              <td>{{ r['id'] }}</td>
-              <td>{{ r['programado_en'] }}</td>
-              <td>{{ r['cliente_nombre'] }}<br><small>{{ r['cliente_doc'] }}</small></td>
-              <td>{{ r['telefono'] }}</td>
-              <td style="max-width:240px;white-space:pre-wrap">{{ r['mensaje'] }}</td>
-              <td>
-                {% if r['estado']=='error' %}
-                  <span class="badge text-bg-danger">error</span><br><small>{{ r['last_error'] }}</small>
-                {% else %}
-                  <span class="badge text-bg-warning">{{ r['estado'] }}</span>
-                {% endif %}
-              </td>
-              <td>{{ r['intentos'] }}</td>
-              <td>
-                <form method="POST" action="{{ url_for('recordatorios.reintentar', id=r['id']) }}" class="d-inline">
-                  <button class="btn btn-sm btn-outline-primary">Reintentar</button>
-                </form>
-                <form method="POST" action="{{ url_for('recordatorios.cancelar', id=r['id']) }}" class="d-inline">
-                  <button class="btn btn-sm btn-outline-secondary">Cancelar</button>
-                </form>
-                <form method="POST" action="{{ url_for('recordatorios.eliminar', id=r['id']) }}" class="d-inline">
-                  <button class="btn btn-sm btn-outline-danger">Eliminar</button>
-                </form>
-                <a class="btn btn-sm btn-outline-success" href="{{ url_for('recordatorios.abrir_chat', id=r['id']) }}" target="_blank">Abrir chat</a>
-                <button class="btn btn-sm btn-outline-dark" type="button" data-bs-toggle="collapse" data-bs-target="#rep{{ r['id'] }}">Reprogramar</button>
-                <div class="collapse mt-2" id="rep{{ r['id'] }}">
-                  <form method="POST" action="{{ url_for('recordatorios.reprogramar', id=r['id']) }}" class="row g-1">
-                    <div class="col">
-                      <input type="date" name="fecha" class="form-control" required>
-                    </div>
-                    <div class="col">
-                      <input type="time" name="hora" class="form-control" required>
-                    </div>
-                    <div class="col">
-                      <button class="btn btn-sm btn-primary">OK</button>
-                    </div>
-                  </form>
-                </div>
-              </td>
-            </tr>
-          {% else %}
-            <tr><td colspan="8" class="text-muted">No hay pendientes.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>#</th><th>Tipo</th><th>Fecha</th><th>Cliente</th><th>Email</th><th>Asunto</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>
+      {% for r in pendientes %}<tr><td>{{ r['id'] }}</td><td>{{ r['tipo'] }}</td><td>{{ r['programado_en'] }}</td><td>{{ r['cliente_nombre'] or '' }}<br><small>{{ r['cliente_doc'] }}</small></td><td>{{ r['email_destino'] or '' }}</td><td style="max-width:220px;white-space:pre-wrap">{{ r['asunto'] }}<br><small>{{ r['mensaje'] }}</small></td><td>{% if r['estado']=='error' %}<span class="badge text-bg-danger">error</span><br><small>{{ r['last_error'] }}</small>{% else %}<span class="badge text-bg-warning">{{ r['estado'] }}</span>{% endif %}<br><small>Intentos: {{ r['intentos'] }}</small></td><td><form method="POST" action="{{ url_for('recordatorios.reintentar', id=r['id']) }}" class="d-inline"><button class="btn btn-sm btn-outline-primary">Reintentar</button></form> <form method="POST" action="{{ url_for('recordatorios.cancelar', id=r['id']) }}" class="d-inline"><button class="btn btn-sm btn-outline-secondary">Cancelar</button></form> <form method="POST" action="{{ url_for('recordatorios.eliminar', id=r['id']) }}" class="d-inline"><button class="btn btn-sm btn-outline-danger">Eliminar</button></form></td></tr>{% else %}<tr><td colspan="8" class="text-muted">No hay pendientes.</td></tr>{% endfor %}
+      </tbody></table></div>
     </div>
-
     <div class="col-12 col-lg-6">
       <h5>Últimos 50 enviados</h5>
-      <div class="table-responsive">
-        <table class="table table-sm align-middle">
-          <thead>
-            <tr><th>#</th><th>Enviado</th><th>Cliente</th><th>Tel</th><th>Mensaje</th></tr>
-          </thead>
-          <tbody>
-          {% for r in enviados %}
-            <tr>
-              <td>{{ r['id'] }}</td>
-              <td>{{ r['enviado_en'] }}</td>
-              <td>{{ r['cliente_nombre'] }}<br><small>{{ r['cliente_doc'] }}</small></td>
-              <td>{{ r['telefono'] }}</td>
-              <td style="max-width:240px;white-space:pre-wrap">{{ r['mensaje'] }}</td>
-            </tr>
-          {% else %}
-            <tr><td colspan="5" class="text-muted">Aún no hay enviados.</td></tr>
-          {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>#</th><th>Enviado</th><th>Tipo</th><th>Cliente</th><th>Email</th><th>Asunto</th></tr></thead><tbody>
+      {% for r in enviados %}<tr><td>{{ r['id'] }}</td><td>{{ r['enviado_en'] }}</td><td>{{ r['tipo'] }}</td><td>{{ r['cliente_nombre'] or '' }}<br><small>{{ r['cliente_doc'] }}</small></td><td>{{ r['email_destino'] or '' }}</td><td style="max-width:240px;white-space:pre-wrap">{{ r['asunto'] }}<br><small>{{ r['mensaje'] }}</small></td></tr>{% else %}<tr><td colspan="6" class="text-muted">Aún no hay enviados.</td></tr>{% endfor %}
+      </tbody></table></div>
     </div>
   </div>
 
   <hr class="my-4">
-
-  <h5>Programar manual</h5>
+  <h5>Programar manual por correo</h5>
   <form method="POST" action="{{ url_for('recordatorios.nuevo') }}" class="row g-2">
-    <div class="col-12 col-md-3">
-      <label class="form-label">Teléfono (UY)</label>
-      <input class="form-control" name="tel" placeholder="09xxxxxxx" required>
-    </div>
-    <div class="col-12 col-md-5">
-      <label class="form-label">Mensaje</label>
-      <input class="form-control" name="mensaje" placeholder="Texto a enviar" required>
-    </div>
-    <div class="col-6 col-md-2">
-      <label class="form-label">Fecha</label>
-      <input type="date" class="form-control" name="fecha" required>
-    </div>
-    <div class="col-6 col-md-2">
-      <label class="form-label">Hora</label>
-      <input type="time" class="form-control" name="hora" required>
-    </div>
-    <div class="col-12">
-      <button class="btn btn-success">Programar</button>
-    </div>
+    <div class="col-12 col-md-3"><label class="form-label">Email</label><input class="form-control" name="email" type="email" required></div>
+    <div class="col-12 col-md-3"><label class="form-label">Asunto</label><input class="form-control" name="asunto" required></div>
+    <div class="col-12 col-md-3"><label class="form-label">Fecha</label><input type="date" class="form-control" name="fecha" required></div>
+    <div class="col-12 col-md-3"><label class="form-label">Hora</label><input type="time" class="form-control" name="hora" required></div>
+    <div class="col-12"><label class="form-label">Mensaje</label><textarea class="form-control" name="mensaje" rows="3" required></textarea></div>
+    <div class="col-12"><button class="btn btn-success">Programar</button></div>
   </form>
 </div>
 {% endblock %}
