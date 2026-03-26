@@ -17,6 +17,11 @@
           <div class="col-md-6"><label class="form-label">Contraseña SMTP</label><input class="form-control" name="smtp_pass" type="password" value="{{ cfg['smtp_pass'] if cfg else '' }}"></div>
           <div class="col-md-6"><label class="form-label">Remitente</label><input class="form-control" name="smtp_from" value="{{ cfg['smtp_from'] if cfg else '' }}" placeholder="avisos@tudominio.com"></div>
           <div class="col-md-6"><label class="form-label">Nombre remitente</label><input class="form-control" name="smtp_from_name" value="{{ cfg['smtp_from_name'] if cfg else '' }}" placeholder="VetCloud / Tu veterinaria"></div>
+        <div class="col-md-12">
+            <label class="form-label">Email de prueba</label>
+            <input class="form-control" name="test_email" type="email" value="{{ cfg['smtp_user'] if cfg else '' }}" placeholder="correo@destino.com">
+            <div class="form-text">Usalo con el botón <strong>Probar SMTP</strong> para verificar conexión, usuario, clave y envío real.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -62,7 +67,12 @@
       </div>
     </div>
 
-    <div class="col-12"><button class="btn btn-primary">Guardar configuración</button> <a class="btn btn-outline-success" href="{{ url_for('recordatorios.enviar_pendientes') }}">Procesar pendientes ahora</a> <a class="btn btn-outline-secondary" href="{{ url_for('recordatorios.diag') }}" target="_blank">Diagnóstico</a></div>
+    <div class="col-12 d-flex flex-wrap gap-2">
+      <button class="btn btn-primary">Guardar configuración</button>
+      <button class="btn btn-outline-dark" type="submit" formaction="{{ url_for('recordatorios.smtp_test') }}" formmethod="post">Probar SMTP</button>
+      <a class="btn btn-outline-success" href="{{ url_for('recordatorios.enviar_pendientes') }}">Procesar pendientes ahora</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('recordatorios.diag') }}" target="_blank">Diagnóstico</a>
+    </div>
   </form>
 
   <div class="row g-3 mb-4">

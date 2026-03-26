@@ -342,16 +342,25 @@ def _auto_generate_tasks_if_needed():
     conn.commit(); conn.close()
 
 
-def _process_pending_batch():
+def _process_pending_batch(force_empresa_id=None, ignore_schedule=False):
     conn = db_conn(); cur = conn.cursor()
-    rows = cur.execute("""
+    where = ["q.estado='pendiente'"]
+    params = []
+    if not ignore_schedule:
+        where.append("DATETIME(q.programado_en) <= DATETIME('now')")
+    if force_empresa_id is not None:
+        where.append("q.empresa_id=?")
+        params.append(force_empresa_id)
+    sql = f"""
         SELECT q.*, rc.smtp_host, rc.smtp_port, rc.smtp_user, rc.smtp_pass, rc.smtp_tls, rc.smtp_from, rc.smtp_from_name
         FROM reminder_queue q
         LEFT JOIN reminder_config rc ON rc.empresa_id=q.empresa_id
-        WHERE q.estado='pendiente' AND DATETIME(q.programado_en) <= DATETIME('now')
+        WHERE {' AND '.join(where)}
         ORDER BY q.programado_en ASC, q.id ASC
         LIMIT ?
-    """, (BATCH_SIZE,)).fetchall()
+    """
+    params.append(BATCH_SIZE)
+    rows = cur.execute(sql, tuple(params)).fetchall()
     for r in rows:
         try:
             cur.execute("UPDATE reminder_queue SET estado='enviando', last_try_at=datetime('now') WHERE id=?", (r['id'],))
@@ -481,9 +490,37 @@ def config():
 
 @bp.route('/enviar_pendientes')
 def enviar_pendientes():
+    emp = empresa_actual()
     _auto_generate_tasks_if_needed()
-    _process_pending_batch()
-    flash('Procesamiento manual ejecutado.', 'info')
+    _process_pending_batch(force_empresa_id=emp, ignore_schedule=True)
+    flash('Procesamiento manual ejecutado. Se intentaron enviar los pendientes de esta veterinaria.', 'info')
+    return redirect(url_for('recordatorios.dashboard'))
+
+
+@bp.route('/smtp_test', methods=['POST'])
+def smtp_test():
+    emp = empresa_actual()
+    if not emp:
+        return redirect(url_for('login'))
+    f = request.form
+    cfg = {
+        'smtp_host': (f.get('smtp_host') or '').strip(),
+        'smtp_port': int(f.get('smtp_port') or 587),
+        'smtp_user': (f.get('smtp_user') or '').strip(),
+        'smtp_pass': (f.get('smtp_pass') or '').strip(),
+        'smtp_tls': 1 if f.get('smtp_tls') else 0,
+        'smtp_from': (f.get('smtp_from') or '').strip(),
+        'smtp_from_name': (f.get('smtp_from_name') or '').strip(),
+    }
+    test_email = (f.get('test_email') or '').strip() or cfg['smtp_from']
+    if not test_email:
+        flash('Ingresá un email de prueba o un remitente válido.', 'danger')
+        return redirect(url_for('recordatorios.dashboard'))
+    try:
+        _smtp_send(cfg, test_email, 'Prueba SMTP VetCloud', 'Esta es una prueba de configuración SMTP desde VetCloud.')
+        flash(f'Prueba SMTP exitosa. Se envió un correo a {test_email}.', 'success')
+    except Exception as e:
+        flash(f'Error SMTP: {e}', 'danger')
     return redirect(url_for('recordatorios.dashboard'))
 
 
