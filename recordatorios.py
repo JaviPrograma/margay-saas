@@ -202,26 +202,54 @@ def _smtp_send(cfg, to_email, subject, body):
     msg['Subject'] = subject or 'Recordatorio'
     msg.set_content(body or '')
 
-    host = cfg['smtp_host']
+    host = (cfg['smtp_host'] or '').strip()
     port = int(cfg['smtp_port'] or 587)
-    user = cfg['smtp_user'] or ''
+    user = (cfg['smtp_user'] or '').strip()
     password = cfg['smtp_pass'] or ''
     use_tls = int(cfg['smtp_tls'] or 0) == 1
 
+    # Forzar IPv4 para evitar errores tipo: [Errno 101] Network is unreachable
+    import socket
+    last_err = None
+    addrinfos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+    if not addrinfos:
+        raise RuntimeError(f'No se pudo resolver {host}:{port}')
+
     if port == 465:
-        with smtplib.SMTP_SSL(host, port, context=ssl.create_default_context(), timeout=30) as server:
-            if user:
-                server.login(user, password)
-            server.send_message(msg)
+        for family, socktype, proto, canonname, sockaddr in addrinfos:
+            try:
+                raw_sock = socket.create_connection(sockaddr, timeout=30)
+                ctx = ssl.create_default_context()
+                with ctx.wrap_socket(raw_sock, server_hostname=host) as ssl_sock:
+                    with smtplib.SMTP_SSL(timeout=30) as server:
+                        server.sock = ssl_sock
+                        server.file = ssl_sock.makefile('rb')
+                        server.helo(host)
+                        if user:
+                            server.login(user, password)
+                        server.send_message(msg)
+                        return
+            except Exception as e:
+                last_err = e
+                continue
     else:
-        with smtplib.SMTP(host, port, timeout=30) as server:
-            server.ehlo()
-            if use_tls:
-                server.starttls(context=ssl.create_default_context())
-                server.ehlo()
-            if user:
-                server.login(user, password)
-            server.send_message(msg)
+        for family, socktype, proto, canonname, sockaddr in addrinfos:
+            try:
+                with smtplib.SMTP(timeout=30) as server:
+                    server.connect(sockaddr[0], sockaddr[1])
+                    server.ehlo()
+                    if use_tls:
+                        server.starttls(context=ssl.create_default_context())
+                        server.ehlo()
+                    if user:
+                        server.login(user, password)
+                    server.send_message(msg)
+                    return
+            except Exception as e:
+                last_err = e
+                continue
+
+    raise RuntimeError(f'Error SMTP: {last_err}')
 
 
 def _gen_mensual_auto(conn, empresa_id, today, cfg):
