@@ -754,6 +754,45 @@ def veterinaria_toggle(empresa_id):
     finally:
         conn.close()
 
+
+@app.route('/mi-cuenta', methods=['GET', 'POST'])
+@require_auth
+def mi_cuenta():
+    conn = get_db()
+    try:
+        user = conn.execute(
+            'SELECT id, nombre, email, password_hash FROM usuarios WHERE id=? AND empresa_id=?',
+            (current_user_id(), current_empresa_id())
+        ).fetchone()
+        if not user:
+            session.clear()
+            flash('Sesión inválida. Iniciá sesión nuevamente.', 'danger')
+            return redirect(url_for('login'))
+
+        if request.method == 'POST':
+            actual = request.form.get('actual_password') or ''
+            nueva = request.form.get('new_password') or ''
+            repetir = request.form.get('repeat_password') or ''
+
+            if not check_password_hash(user['password_hash'], actual):
+                flash('La contraseña actual no es correcta.', 'danger')
+            elif len(nueva) < 6:
+                flash('La nueva contraseña debe tener al menos 6 caracteres.', 'danger')
+            elif nueva != repetir:
+                flash('La repetición de la contraseña no coincide.', 'danger')
+            else:
+                conn.execute(
+                    'UPDATE usuarios SET password_hash=? WHERE id=? AND empresa_id=?',
+                    (generate_password_hash(nueva), current_user_id(), current_empresa_id())
+                )
+                conn.commit()
+                flash('Contraseña actualizada correctamente.', 'success')
+                return redirect(url_for('mi_cuenta'))
+
+        return render_template('mi_cuenta.html', user=user)
+    finally:
+        conn.close()
+
 @app.context_processor
 def inject_saas_context():
     return {
@@ -826,13 +865,25 @@ def clientes():
     conn = get_db()
     query = "SELECT * FROM clientes WHERE empresa_id=?"
     params = [current_empresa_id()]
-    # params ya arranca con empresa_id
+
     if q_nombre:
-        query += " AND nombre LIKE ?"; params.append(f"%{q_nombre}%")
+        like = f"%{q_nombre}%"
+        query += " AND (nombre LIKE ? COLLATE NOCASE OR COALESCE(telefono,'') LIKE ? OR COALESCE(email,'') LIKE ? COLLATE NOCASE)"
+        params.extend([like, like, like])
+
     if q_cedula:
-        query += " AND cedula LIKE ?"; params.append(f"%{q_cedula}%")
+        ced_digits = re.sub(r"\D", "", q_cedula)
+        if ced_digits:
+            query += " AND REPLACE(REPLACE(REPLACE(COALESCE(cedula,''), '.', ''), '-', ''), ' ', '') LIKE ?"
+            params.append(f"%{ced_digits}%")
+        else:
+            query += " AND COALESCE(cedula,'') LIKE ?"
+            params.append(f"%{q_cedula}%")
+
     if q_tipo in ("Mensual", "Particular"):
-        query += " AND tipo = ?"; params.append(q_tipo)
+        query += " AND tipo = ?"
+        params.append(q_tipo)
+
     query += " ORDER BY nombre COLLATE NOCASE"
 
     filas = conn.execute(query, params).fetchall()
