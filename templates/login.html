@@ -20,6 +20,7 @@
           <h2 class="brand mb-1">VetCloud</h2>
           <p class="text-muted mb-0">Ingresá a tu veterinaria</p>
         </div>
+
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
             {% for category, message in messages %}
@@ -27,6 +28,7 @@
             {% endfor %}
           {% endif %}
         {% endwith %}
+
         <form method="post">
           <div class="mb-3">
             <label class="form-label">Veterinaria</label>
@@ -37,21 +39,20 @@
               {% endfor %}
             </select>
           </div>
+
           <div class="mb-3">
             <label class="form-label">Email</label>
             <input class="form-control" type="email" name="email" required>
           </div>
+
           <div class="mb-3">
             <label class="form-label">Contraseña</label>
             <input class="form-control" type="password" name="password" required>
           </div>
+
           <button class="btn btn-primary w-100">Entrar</button>
         </form>
-        <hr>
-        <div class="small text-muted">
-          Usuario migrado por defecto: <strong>admin@margay.local</strong><br>
-          Contraseña por defecto: <strong>admin1234</strong>
-        </div>
+
       </div>
     </div>
   </div>
