@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Desparasitación de {{ animal['nombre'] }}</h2>
+
+<form method="POST" action="{{ url_for('desparasitacion_nueva', animal_id=animal['id']) }}" class="mb-4 p-3 border rounded shadow-sm bg-white">
+  <div class="row g-3">
+    <div class="col-md-4">
+      <label for="tipo" class="form-label">Tipo</label>
+      <input type="text" id="tipo" name="tipo" class="form-control" placeholder="Interna, externa, pipeta, comprimido..." required>
+    </div>
+    <div class="col-md-4">
+      <label for="fecha_aplicacion" class="form-label">Fecha aplicación</label>
+      <input type="date" id="fecha_aplicacion" name="fecha_aplicacion" class="form-control" required>
+    </div>
+    <div class="col-md-4">
+      <label for="fecha_vencimiento" class="form-label">Fecha vencimiento</label>
+      <input type="date" id="fecha_vencimiento" name="fecha_vencimiento" class="form-control" required>
+    </div>
+  </div>
+  <button type="submit" class="btn btn-primary mt-3">Agregar desparasitación</button>
+</form>
+
+<table class="table table-hover shadow-sm">
+  <thead class="table-info">
+    <tr>
+      <th>Tipo</th>
+      <th>Fecha aplicación</th>
+      <th>Fecha vencimiento</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for d in desparasitaciones %}
+    <tr>
+      <td>{{ d['tipo'] }}</td>
+      <td>{{ d['fecha_aplicacion'] }}</td>
+      <td>{{ d['fecha_vencimiento'] }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="text-center">No hay desparasitaciones registradas.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<a href="{{ url_for('animales', cliente_id=animal['cliente_id']) }}" class="btn btn-secondary mt-3">⬅ Volver a Animales</a>
+{% endblock %}

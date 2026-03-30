@@ -14,7 +14,7 @@ app.secret_key = os.environ.get('SECRET_KEY', 'tu_clave_secreta_aqui')
 # --- Config generales ---
 CLINIC_NAME = "MARGAY"
 CLINIC_WHATSAPP_RETURN = "agenda_lista"  # adónde volver luego de abrir WhatsApp
-app.config['UPLOAD_FOLDER'] = 'static/uploads'
+app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', '/var/data/uploads' if (os.environ.get('RENDER') or os.environ.get('PORT')) else 'static/uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
 # Base de datos: en Render conviene /tmp; en local usa veterinaria.db
 _database_env = os.environ.get('DATABASE_PATH')
@@ -210,6 +210,18 @@ def init_db():
         FOREIGN KEY(animal_id) REFERENCES animales(id)
     )""")
 
+    # Desparasitaciones
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS desparasitaciones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        animal_id INTEGER NOT NULL,
+        tipo TEXT,
+        fecha_aplicacion TEXT NOT NULL,
+        fecha_vencimiento TEXT NOT NULL,
+        empresa_id INTEGER DEFAULT 1,
+        FOREIGN KEY(animal_id) REFERENCES animales(id)
+    )""")
+
     # Motivos
     cur.execute("""
     CREATE TABLE IF NOT EXISTS motivos (
@@ -388,6 +400,7 @@ def init_db():
         "ALTER TABLE animales ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE historia_clinica ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE vacunas ADD COLUMN empresa_id INTEGER DEFAULT 1",
+        "ALTER TABLE desparasitaciones ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE motivos ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE agenda ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE mensualidades ADD COLUMN empresa_id INTEGER DEFAULT 1",
@@ -405,7 +418,7 @@ def init_db():
         pass
 
     # backfill de empresa_id
-    for table in ['doctores','clientes','animales','historia_clinica','vacunas','motivos','agenda','mensualidades','matriculas','vacuna_recordatorios']:
+    for table in ['doctores','clientes','animales','historia_clinica','vacunas','desparasitaciones','motivos','agenda','mensualidades','matriculas','vacuna_recordatorios']:
         try:
             cur.execute(f"UPDATE {table} SET empresa_id=1 WHERE empresa_id IS NULL")
         except Exception:
@@ -1159,6 +1172,43 @@ def vacuna_nueva(animal_id):
     conn.commit()
     conn.close()
     return redirect(url_for("vacunas", animal_id=animal_id))
+
+
+@app.route("/desparasitaciones/<int:animal_id>")
+def desparasitaciones(animal_id):
+    conn = get_db()
+    animal = conn.execute("SELECT * FROM animales WHERE id=? AND empresa_id=?", (animal_id, current_empresa_id())).fetchone()
+    if animal is None:
+        conn.close()
+        abort(404)
+    desparasitaciones = conn.execute(
+        "SELECT * FROM desparasitaciones WHERE animal_id=? AND empresa_id=? ORDER BY fecha_aplicacion DESC, id DESC",
+        (animal_id, current_empresa_id())
+    ).fetchall()
+    conn.close()
+    return render_template("desparasitaciones.html", animal=animal, desparasitaciones=desparasitaciones)
+
+@app.route("/desparasitaciones/nuevo/<int:animal_id>", methods=["POST"])
+def desparasitacion_nueva(animal_id):
+    tipo = request.form.get("tipo", "").strip()
+    fecha_aplicacion = request.form.get("fecha_aplicacion")
+    fecha_vencimiento = request.form.get("fecha_vencimiento")
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO desparasitaciones (animal_id, tipo, fecha_aplicacion, fecha_vencimiento, empresa_id) VALUES (?, ?, ?, ?, ?)",
+        (animal_id, tipo, fecha_aplicacion, fecha_vencimiento, current_empresa_id()),
+    )
+    # Mantener visible la última desparasitación en la tabla de animales
+    try:
+        conn.execute(
+            "UPDATE animales SET ultima_desparasitacion=? WHERE id=? AND empresa_id=?",
+            (fecha_aplicacion, animal_id, current_empresa_id())
+        )
+    except Exception:
+        pass
+    conn.commit()
+    conn.close()
+    return redirect(url_for("desparasitaciones", animal_id=animal_id))
 
 # -------- Archivos subidos --------
 @app.route("/uploads/<filename>")

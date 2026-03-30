@@ -12,11 +12,12 @@
         <div class="row g-2">
           <div class="col-md-6"><label class="form-label">Servidor SMTP</label><input class="form-control" name="smtp_host" value="{{ cfg['smtp_host'] if cfg else '' }}" placeholder="smtp.tudominio.com"></div>
           <div class="col-md-3"><label class="form-label">Puerto</label><input class="form-control" name="smtp_port" type="number" value="{{ cfg['smtp_port'] if cfg else 587 }}"></div>
-          <div class="col-md-3 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" name="smtp_tls" id="smtp_tls" {% if cfg and cfg['smtp_tls'] %}checked{% endif %}><label class="form-check-label" for="smtp_tls">Usar TLS</label></div></div>
+          <div class="col-md-3 d-flex align-items-end"><div class="form-check me-3"><input class="form-check-input" type="checkbox" name="smtp_tls" id="smtp_tls" {% if cfg and cfg['smtp_tls'] %}checked{% endif %}><label class="form-check-label" for="smtp_tls">Usar TLS</label></div><div class="form-check"><input class="form-check-input" type="checkbox" name="smtp_ssl" id="smtp_ssl" {% if cfg and cfg['smtp_ssl'] %}checked{% endif %}><label class="form-check-label" for="smtp_ssl">Usar SSL</label></div></div>
           <div class="col-md-6"><label class="form-label">Usuario SMTP</label><input class="form-control" name="smtp_user" value="{{ cfg['smtp_user'] if cfg else '' }}"></div>
           <div class="col-md-6"><label class="form-label">Contraseña SMTP</label><input class="form-control" name="smtp_pass" type="password" value="{{ cfg['smtp_pass'] if cfg else '' }}"></div>
           <div class="col-md-6"><label class="form-label">Remitente</label><input class="form-control" name="smtp_from" value="{{ cfg['smtp_from'] if cfg else '' }}" placeholder="avisos@tudominio.com"></div>
           <div class="col-md-6"><label class="form-label">Nombre remitente</label><input class="form-control" name="smtp_from_name" value="{{ cfg['smtp_from_name'] if cfg else '' }}" placeholder="VetCloud / Tu veterinaria"></div>
+          <div class="col-12"><small class="text-muted">Para Gmail suele funcionar mejor: puerto 465 + SSL. Para STARTTLS: puerto 587 + TLS.</small></div>
         <div class="col-md-12">
             <label class="form-label">Email de prueba</label>
             <input class="form-control" name="test_email" type="email" value="{{ cfg['smtp_user'] if cfg else '' }}" placeholder="correo@destino.com">

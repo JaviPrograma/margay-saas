@@ -65,6 +65,7 @@
       <td>
         <a href="{{ url_for('historia', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-primary">Historia Clínica</a>
         <a href="{{ url_for('vacunas', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-success">Vacunas</a>
+        <a href="{{ url_for('desparasitaciones', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-info">Desparasitación</a>
         <a href="{{ url_for('animal_editar', id=animal['id']) }}?cliente_id={{ cliente['id'] }}" class="btn btn-sm btn-warning">Editar</a>
         <a href="{{ url_for('animal_eliminar', id=animal['id']) }}" class="btn btn-sm btn-danger" onclick="return confirm('¿Eliminar animal?')">Eliminar</a>
       </td>

@@ -67,6 +67,7 @@ def init_tables():
         smtp_user TEXT,
         smtp_pass TEXT,
         smtp_tls INTEGER DEFAULT 1,
+        smtp_ssl INTEGER DEFAULT 0,
         smtp_from TEXT,
         smtp_from_name TEXT
     )""")
@@ -115,6 +116,7 @@ def init_tables():
     _ensure_column(cur, 'reminder_config', 'smtp_user', "smtp_user TEXT")
     _ensure_column(cur, 'reminder_config', 'smtp_pass', "smtp_pass TEXT")
     _ensure_column(cur, 'reminder_config', 'smtp_tls', "smtp_tls INTEGER DEFAULT 1")
+    _ensure_column(cur, 'reminder_config', 'smtp_ssl', "smtp_ssl INTEGER DEFAULT 0")
     _ensure_column(cur, 'reminder_config', 'smtp_from', "smtp_from TEXT")
     _ensure_column(cur, 'reminder_config', 'smtp_from_name', "smtp_from_name TEXT")
 
@@ -178,6 +180,15 @@ def _empresa_nombre(conn, empresa_id):
     return row['nombre'] if row else CLINICA
 
 
+
+def _render_placeholders(template, **vals):
+    msg = template or ''
+    for k, v in vals.items():
+        val = '' if v is None else str(v)
+        msg = msg.replace('{' + k + '}', val)
+        msg = msg.replace('{' + k.upper() + '}', val)
+    return msg
+
 def _cliente_doc(conn, cliente_id):
     row = conn.execute("SELECT cedula FROM clientes WHERE id=?", (cliente_id,)).fetchone()
     return (row['cedula'] if row else '') or ''
@@ -204,53 +215,42 @@ def _smtp_send(cfg, to_email, subject, body):
 
     host = (cfg['smtp_host'] or '').strip()
     port = int(cfg['smtp_port'] or 587)
-    user = (cfg['smtp_user'] or '').strip()
-    password = cfg['smtp_pass'] or ''
-    use_tls = int(cfg['smtp_tls'] or 0) == 1
+    cfg = dict(cfg) if not isinstance(cfg, dict) else cfg
+    user = (cfg.get('smtp_user') or '').strip()
+    password = cfg.get('smtp_pass') or ''
+    use_tls = int(cfg.get('smtp_tls') or 0) == 1
+    use_ssl = int(cfg.get('smtp_ssl') or 0) == 1 or port == 465
 
-    # Forzar IPv4 para evitar errores tipo: [Errno 101] Network is unreachable
-    import socket
-    last_err = None
-    addrinfos = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
-    if not addrinfos:
-        raise RuntimeError(f'No se pudo resolver {host}:{port}')
-
-    if port == 465:
-        for family, socktype, proto, canonname, sockaddr in addrinfos:
-            try:
-                raw_sock = socket.create_connection(sockaddr, timeout=30)
-                ctx = ssl.create_default_context()
-                with ctx.wrap_socket(raw_sock, server_hostname=host) as ssl_sock:
-                    with smtplib.SMTP_SSL(timeout=30) as server:
-                        server.sock = ssl_sock
-                        server.file = ssl_sock.makefile('rb')
-                        server.helo(host)
-                        if user:
-                            server.login(user, password)
-                        server.send_message(msg)
-                        return
-            except Exception as e:
-                last_err = e
-                continue
-    else:
-        for family, socktype, proto, canonname, sockaddr in addrinfos:
-            try:
-                with smtplib.SMTP(timeout=30) as server:
-                    server.connect(sockaddr[0], sockaddr[1])
+    timeout = 15
+    try:
+        if use_ssl:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(host=host, port=port, timeout=timeout, context=context) as server:
+                server.ehlo()
+                if user:
+                    server.login(user, password)
+                server.send_message(msg)
+                return
+        else:
+            with smtplib.SMTP(host=host, port=port, timeout=timeout) as server:
+                server.ehlo()
+                if use_tls:
+                    server.starttls(context=ssl.create_default_context())
                     server.ehlo()
-                    if use_tls:
-                        server.starttls(context=ssl.create_default_context())
-                        server.ehlo()
-                    if user:
-                        server.login(user, password)
-                    server.send_message(msg)
-                    return
-            except Exception as e:
-                last_err = e
-                continue
-
-    raise RuntimeError(f'Error SMTP: {last_err}')
-
+                if user:
+                    server.login(user, password)
+                server.send_message(msg)
+                return
+    except smtplib.SMTPAuthenticationError as e:
+        raise RuntimeError('Autenticación SMTP rechazada. Revisá usuario y contraseña de aplicación.') from e
+    except smtplib.SMTPConnectError as e:
+        raise RuntimeError(f'No se pudo conectar al servidor SMTP ({host}:{port}).') from e
+    except TimeoutError as e:
+        raise RuntimeError(f'Timeout al conectar con {host}:{port}.') from e
+    except OSError as e:
+        raise RuntimeError(f'Error de red SMTP: {e}') from e
+    except smtplib.SMTPException as e:
+        raise RuntimeError(f'Error SMTP: {e}') from e
 
 def _gen_mensual_auto(conn, empresa_id, today, cfg):
     if not int(cfg['mensual_enabled'] or 0):
@@ -264,7 +264,13 @@ def _gen_mensual_auto(conn, empresa_id, today, cfg):
     tpl = (cfg['mensual_template'] or "Hola {CLIENTE}, te recordamos la mensualidad de {MES}/{ANIO}.")
     for r in rows:
         asunto = f"{clinica} - Recordatorio de mensualidad"
-        msg = tpl.replace('{CLIENTE}', r['nombre']).replace('{MES}', f"{today.month:02d}").replace('{ANIO}', str(today.year))
+        msg = _render_placeholders(
+            tpl,
+            cliente=r['nombre'],
+            mes=f"{today.month:02d}",
+            anio=str(today.year),
+            empresa=clinica,
+        )
         _enqueue(conn, empresa_id, 'mensual', cliente_id=r['id'], referencia_fecha=referencia, email_destino=r['email'], asunto=asunto, mensaje=msg, programado_en=programado)
 
 
@@ -288,8 +294,17 @@ def _gen_vacunas_auto(conn, empresa_id, today, cfg):
     for r in filas:
         referencia = r['fecha_vencimiento']
         asunto = f"{clinica} - Vacunas próximas a vencer"
-        listado = f"- {r['animal_nombre']}: vence {r['fecha_vencimiento']}"
-        msg = tpl.replace('{CLIENTE}', r['cliente_nombre']).replace('{LISTADO}', listado)
+        fecha_vto = r['fecha_vencimiento']
+        listado = f"- {r['animal_nombre']}: vence {fecha_vto}"
+        msg = _render_placeholders(
+            tpl,
+            cliente=r['cliente_nombre'],
+            animal=r['animal_nombre'],
+            fecha=fecha_vto,
+            listado=listado,
+            empresa=clinica,
+            tipo='vacuna',
+        )
         _enqueue(conn, empresa_id, 'vacuna', cliente_id=r['cliente_id'], animal_id=r['animal_id'], vacuna_id=r['vacuna_id'], referencia_fecha=referencia, email_destino=r['email'], asunto=asunto, mensaje=msg, programado_en=programado)
 
 
@@ -321,7 +336,15 @@ def _gen_despa_auto(conn, empresa_id, today, cfg):
         referencia = vence.strftime('%Y-%m-%d')
         asunto = f"{clinica} - Desparasitación próxima a vencer"
         listado = f"- {r['animal_nombre']}: vence {referencia}"
-        msg = tpl.replace('{CLIENTE}', r['cliente_nombre']).replace('{LISTADO}', listado)
+        msg = _render_placeholders(
+            tpl,
+            cliente=r['cliente_nombre'],
+            animal=r['animal_nombre'],
+            fecha=referencia,
+            listado=listado,
+            empresa=clinica,
+            tipo='desparasitación',
+        )
         _enqueue(conn, empresa_id, 'desparasitacion', cliente_id=r['cliente_id'], animal_id=r['animal_id'], referencia_fecha=referencia, email_destino=r['email'], asunto=asunto, mensaje=msg, programado_en=programado)
 
 
@@ -349,7 +372,11 @@ def _gen_part_impagos_auto(conn, empresa_id, today, cfg):
     tpl = cfg['part_template'] or "Hola {CLIENTE}, registramos impagos pendientes de consultas particulares."
     for r in filas:
         asunto = f"{clinica} - Recordatorio de impagos"
-        msg = tpl.replace('{CLIENTE}', r['nombre'])
+        msg = _render_placeholders(
+            tpl,
+            cliente=r['nombre'],
+            empresa=clinica,
+        )
         _enqueue(conn, empresa_id, 'particular', cliente_id=r['id'], referencia_fecha=referencia, email_destino=r['email'], asunto=asunto, mensaje=msg, programado_en=programado)
 
 
@@ -380,7 +407,7 @@ def _process_pending_batch(force_empresa_id=None, ignore_schedule=False):
         where.append("q.empresa_id=?")
         params.append(force_empresa_id)
     sql = f"""
-        SELECT q.*, rc.smtp_host, rc.smtp_port, rc.smtp_user, rc.smtp_pass, rc.smtp_tls, rc.smtp_from, rc.smtp_from_name
+        SELECT q.*, rc.smtp_host, rc.smtp_port, rc.smtp_user, rc.smtp_pass, rc.smtp_tls, rc.smtp_ssl, rc.smtp_from, rc.smtp_from_name
         FROM reminder_queue q
         LEFT JOIN reminder_config rc ON rc.empresa_id=q.empresa_id
         WHERE {' AND '.join(where)}
@@ -498,6 +525,7 @@ def config():
         (f.get('smtp_user') or '').strip(),
         (f.get('smtp_pass') or '').strip(),
         1 if f.get('smtp_tls') else 0,
+        1 if f.get('smtp_ssl') else 0,
         (f.get('smtp_from') or '').strip(),
         (f.get('smtp_from_name') or '').strip(),
         emp
@@ -508,7 +536,7 @@ def config():
             vacunas_enabled=?, vacunas_template=?, vacunas_hora=?, vacunas_dias_antes=?,
             despa_enabled=?, despa_template=?, despa_hora=?, despa_dias_antes=?, despa_intervalo_dias=?,
             part_enabled=?, part_template=?, part_hora=?, part_dia_mes=?,
-            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_from=?, smtp_from_name=?
+            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?
         WHERE empresa_id=?
     """, values)
     conn.commit(); conn.close()
@@ -537,6 +565,7 @@ def smtp_test():
         'smtp_user': (f.get('smtp_user') or '').strip(),
         'smtp_pass': (f.get('smtp_pass') or '').strip(),
         'smtp_tls': 1 if f.get('smtp_tls') else 0,
+        'smtp_ssl': 1 if f.get('smtp_ssl') else 0,
         'smtp_from': (f.get('smtp_from') or '').strip(),
         'smtp_from_name': (f.get('smtp_from_name') or '').strip(),
     }
