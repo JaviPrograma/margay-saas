@@ -663,24 +663,6 @@ def logout():
 def current_user_role():
     return session.get('rol')
 
-
-def is_margay_master():
-    nombre = (session.get('empresa_nombre') or '').strip().lower()
-    empresa_id = session.get('empresa_id')
-    return empresa_id == 1 or nombre == 'margay'
-
-def require_master_admin(view):
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        if not current_user_id() or not current_empresa_id():
-            return redirect(url_for('login'))
-        if current_user_role() != 'admin' or not is_margay_master():
-            flash('No tenés permisos para entrar ahí.', 'danger')
-            return redirect(url_for('home'))
-        return view(*args, **kwargs)
-    return wrapped
-
-
 def require_admin(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -693,7 +675,7 @@ def require_admin(view):
     return wrapped
 
 @app.route('/veterinarias')
-@require_master_admin
+@require_admin
 def veterinarias_panel():
     conn = get_db()
     try:
@@ -708,7 +690,7 @@ def veterinarias_panel():
         conn.close()
 
 @app.route('/veterinarias/nueva', methods=['POST'])
-@require_master_admin
+@require_admin
 def veterinaria_nueva():
     nombre = (request.form.get('nombre') or '').strip()
     slug_raw = (request.form.get('slug') or '').strip().lower()
@@ -754,7 +736,7 @@ def veterinaria_nueva():
         conn.close()
 
 @app.route('/veterinarias/toggle/<int:empresa_id>', methods=['POST'])
-@require_master_admin
+@require_admin
 def veterinaria_toggle(empresa_id):
     if empresa_id == current_empresa_id():
         flash('No podés desactivar la veterinaria en la que estás logueado.', 'danger')
@@ -777,8 +759,7 @@ def inject_saas_context():
     return {
         'empresa_nombre': session.get('empresa_nombre', CLINIC_NAME),
         'user_nombre': session.get('user_nombre'),
-        'user_rol': session.get('rol'),
-        'is_margay_master': is_margay_master()
+        'user_rol': session.get('rol')
     }
 
 @app.route("/")
