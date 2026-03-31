@@ -9,4 +9,4 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_PATH
-        value: /tmp/veterinaria.db
+        value: veterinaria.db

@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, abort, send_from_directory, jsonify, flash, session, g
 import sqlite3
-import os, re, sqlite3, shutil
+import os, re, sqlite3
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta, time, date
 from urllib.parse import quote
@@ -14,25 +14,11 @@ app.secret_key = os.environ.get('SECRET_KEY', 'tu_clave_secreta_aqui')
 # --- Config generales ---
 CLINIC_NAME = "MARGAY"
 CLINIC_WHATSAPP_RETURN = "agenda_lista"  # adónde volver luego de abrir WhatsApp
-app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', '/var/data/uploads' if (os.environ.get('RENDER') or os.environ.get('PORT')) else 'static/uploads')
+app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
-# Base de datos: en Render conviene /tmp; en local usa veterinaria.db
-_database_env = os.environ.get('DATABASE_PATH')
-if _database_env:
-    DATABASE = _database_env
-elif os.environ.get('RENDER') or os.environ.get('PORT'):
-    DATABASE = '/tmp/veterinaria.db'
-else:
-    DATABASE = 'veterinaria.db'
+DATABASE = os.environ.get('DATABASE_PATH', 'veterinaria.db')
 # Opcional: clave simple para el programador de tareas
 app.config.setdefault('TASK_SECRET', 'margay-task')
-
-# Si estamos en un entorno efímero (Render) y no existe la DB todavía,
-# copiamos la base incluida en el proyecto para arrancar con datos y esquema.
-if DATABASE.startswith('/tmp/') and not os.path.exists(DATABASE):
-    _seed_db = os.path.join(os.path.dirname(__file__), 'veterinaria.db')
-    if os.path.exists(_seed_db):
-        shutil.copy(_seed_db, DATABASE)
 
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
@@ -44,24 +30,6 @@ def current_empresa_id():
 
 def current_user_id():
     return session.get('user_id')
-
-
-def is_margay_master():
-    nombre = (session.get('empresa_nombre') or '').strip().lower()
-    empresa_id = session.get('empresa_id')
-    return empresa_id == 1 or nombre == 'margay'
-
-def require_master_admin(view):
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        if not current_user_id() or not current_empresa_id():
-            return redirect(url_for('login'))
-        if current_user_role() != 'admin' or not is_margay_master():
-            flash('No tenés permisos para entrar ahí.', 'danger')
-            return redirect(url_for('index'))
-        return view(*args, **kwargs)
-    return wrapped
-
 
 def require_auth(view):
     @wraps(view)
@@ -228,18 +196,6 @@ def init_db():
         FOREIGN KEY(animal_id) REFERENCES animales(id)
     )""")
 
-    # Desparasitaciones
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS desparasitaciones (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        animal_id INTEGER NOT NULL,
-        tipo TEXT,
-        fecha_aplicacion TEXT NOT NULL,
-        fecha_vencimiento TEXT NOT NULL,
-        empresa_id INTEGER DEFAULT 1,
-        FOREIGN KEY(animal_id) REFERENCES animales(id)
-    )""")
-
     # Motivos
     cur.execute("""
     CREATE TABLE IF NOT EXISTS motivos (
@@ -282,7 +238,6 @@ def init_db():
     # Clientes extras
     for alter in [
         "ALTER TABLE clientes ADD COLUMN direccion TEXT",
-        "ALTER TABLE clientes ADD COLUMN email TEXT",
         "ALTER TABLE clientes ADD COLUMN activo INTEGER DEFAULT 1",
         "ALTER TABLE clientes ADD COLUMN cuota_mensual REAL",
         "ALTER TABLE clientes ADD COLUMN fecha_afiliacion TEXT"
@@ -418,7 +373,6 @@ def init_db():
         "ALTER TABLE animales ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE historia_clinica ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE vacunas ADD COLUMN empresa_id INTEGER DEFAULT 1",
-        "ALTER TABLE desparasitaciones ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE motivos ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE agenda ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE mensualidades ADD COLUMN empresa_id INTEGER DEFAULT 1",
@@ -436,7 +390,7 @@ def init_db():
         pass
 
     # backfill de empresa_id
-    for table in ['doctores','clientes','animales','historia_clinica','vacunas','desparasitaciones','motivos','agenda','mensualidades','matriculas','vacuna_recordatorios']:
+    for table in ['doctores','clientes','animales','historia_clinica','vacunas','motivos','agenda','mensualidades','matriculas','vacuna_recordatorios']:
         try:
             cur.execute(f"UPDATE {table} SET empresa_id=1 WHERE empresa_id IS NULL")
         except Exception:
@@ -681,6 +635,24 @@ def logout():
 def current_user_role():
     return session.get('rol')
 
+
+def is_margay_master():
+    empresa_nombre = (session.get('empresa_nombre') or '').strip().lower()
+    empresa_id = session.get('empresa_id')
+    return empresa_id == 1 or empresa_nombre == 'margay'
+
+def require_master_admin(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not current_user_id() or not current_empresa_id():
+            return redirect(url_for('login'))
+        if current_user_role() != 'admin' or not is_margay_master():
+            flash('No tenés permisos para entrar ahí.', 'danger')
+            return redirect(url_for('home'))
+        return view(*args, **kwargs)
+    return wrapped
+
+
 def require_admin(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -772,45 +744,6 @@ def veterinaria_toggle(empresa_id):
     finally:
         conn.close()
 
-
-@app.route('/mi-cuenta', methods=['GET', 'POST'])
-@require_auth
-def mi_cuenta():
-    conn = get_db()
-    try:
-        user = conn.execute(
-            'SELECT id, nombre, email, password_hash FROM usuarios WHERE id=? AND empresa_id=?',
-            (current_user_id(), current_empresa_id())
-        ).fetchone()
-        if not user:
-            session.clear()
-            flash('Sesión inválida. Iniciá sesión nuevamente.', 'danger')
-            return redirect(url_for('login'))
-
-        if request.method == 'POST':
-            actual = request.form.get('actual_password') or ''
-            nueva = request.form.get('new_password') or ''
-            repetir = request.form.get('repeat_password') or ''
-
-            if not check_password_hash(user['password_hash'], actual):
-                flash('La contraseña actual no es correcta.', 'danger')
-            elif len(nueva) < 6:
-                flash('La nueva contraseña debe tener al menos 6 caracteres.', 'danger')
-            elif nueva != repetir:
-                flash('La repetición de la contraseña no coincide.', 'danger')
-            else:
-                conn.execute(
-                    'UPDATE usuarios SET password_hash=? WHERE id=? AND empresa_id=?',
-                    (generate_password_hash(nueva), current_user_id(), current_empresa_id())
-                )
-                conn.commit()
-                flash('Contraseña actualizada correctamente.', 'success')
-                return redirect(url_for('mi_cuenta'))
-
-        return render_template('mi_cuenta.html', user=user)
-    finally:
-        conn.close()
-
 @app.context_processor
 def inject_saas_context():
     return {
@@ -884,25 +817,13 @@ def clientes():
     conn = get_db()
     query = "SELECT * FROM clientes WHERE empresa_id=?"
     params = [current_empresa_id()]
-
+    # params ya arranca con empresa_id
     if q_nombre:
-        like = f"%{q_nombre}%"
-        query += " AND (nombre LIKE ? COLLATE NOCASE OR COALESCE(telefono,'') LIKE ? OR COALESCE(email,'') LIKE ? COLLATE NOCASE)"
-        params.extend([like, like, like])
-
+        query += " AND nombre LIKE ?"; params.append(f"%{q_nombre}%")
     if q_cedula:
-        ced_digits = re.sub(r"\D", "", q_cedula)
-        if ced_digits:
-            query += " AND REPLACE(REPLACE(REPLACE(COALESCE(cedula,''), '.', ''), '-', ''), ' ', '') LIKE ?"
-            params.append(f"%{ced_digits}%")
-        else:
-            query += " AND COALESCE(cedula,'') LIKE ?"
-            params.append(f"%{q_cedula}%")
-
+        query += " AND cedula LIKE ?"; params.append(f"%{q_cedula}%")
     if q_tipo in ("Mensual", "Particular"):
-        query += " AND tipo = ?"
-        params.append(q_tipo)
-
+        query += " AND tipo = ?"; params.append(q_tipo)
     query += " ORDER BY nombre COLLATE NOCASE"
 
     filas = conn.execute(query, params).fetchall()
@@ -933,7 +854,6 @@ def cliente_nuevo():
     cedula = (request.form.get("cedula", "") or "").strip()
     tipo = request.form.get("tipo", "Particular").strip()
     direccion = request.form.get("direccion", "").strip()
-    email = (request.form.get("email", "") or "").strip().lower()
     cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
 
     conn = get_db()
@@ -948,9 +868,9 @@ def cliente_nuevo():
     try:
         fecha_af = datetime.now().strftime("%Y-%m-%d") if tipo == "Mensual" else None
         conn.execute(
-            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, empresa_id)
-               VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?)""",
-            (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, current_empresa_id()),
+            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, activo, cuota_mensual, fecha_afiliacion, empresa_id)
+               VALUES (?, ?, ?, ?, 0, ?, 1, ?, ?, ?)""",
+            (nombre, telefono, cedula, tipo, direccion, cuota_mensual, fecha_af),
         )
         cliente_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()['id']
 
@@ -980,7 +900,6 @@ def cliente_editar(id):
         cedula = (request.form.get("cedula", "") or "").strip()
         tipo = request.form.get("tipo", "Particular").strip()
         direccion = request.form.get("direccion", "").strip()
-        email = (request.form.get("email", "") or "").strip().lower()
         cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
 
         prev = conn.execute("SELECT tipo FROM clientes WHERE id=? AND empresa_id=?", (id, current_empresa_id())).fetchone()
@@ -1000,9 +919,9 @@ def cliente_editar(id):
 
             conn.execute(
                 """UPDATE clientes
-                   SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
+                   SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
                    WHERE id=?""",
-                (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, id),
+                (nombre, telefono, cedula, tipo, direccion, cuota_mensual, fecha_af, id),
             )
 
             if prev_tipo != "Mensual" and tipo == "Mensual":
@@ -1106,11 +1025,10 @@ def animal_nuevo(cliente_id):
     especie = request.form.get("especie", "").strip()
     raza = request.form.get("raza", "").strip()
     fecha_nacimiento = request.form.get("fecha_nacimiento", "").strip()
-    ultima_desparasitacion = request.form.get("ultima_desparasitacion", "").strip()
     conn = get_db()
     conn.execute(
-        "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, empresa_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, current_empresa_id()),
+        "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, empresa_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (cliente_id, nombre, especie, raza, fecha_nacimiento, current_empresa_id()),
     )
     conn.commit()
     conn.close()
@@ -1124,10 +1042,9 @@ def animal_editar(id):
         especie = request.form.get("especie", "").strip()
         raza = request.form.get("raza", "").strip()
         fecha_nacimiento = request.form.get("fecha_nacimiento", "").strip()
-        ultima_desparasitacion = request.form.get("ultima_desparasitacion", "").strip()
         conn.execute(
-            "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=?, ultima_desparasitacion=? WHERE id=? AND empresa_id=?",
-            (nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, id, current_empresa_id()),
+            "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=? WHERE id=? AND empresa_id=?",
+            (nombre, especie, raza, fecha_nacimiento, id, current_empresa_id()),
         )
         conn.commit()
         cliente_id = request.args.get("cliente_id")
@@ -1243,43 +1160,6 @@ def vacuna_nueva(animal_id):
     conn.close()
     return redirect(url_for("vacunas", animal_id=animal_id))
 
-
-@app.route("/desparasitaciones/<int:animal_id>")
-def desparasitaciones(animal_id):
-    conn = get_db()
-    animal = conn.execute("SELECT * FROM animales WHERE id=? AND empresa_id=?", (animal_id, current_empresa_id())).fetchone()
-    if animal is None:
-        conn.close()
-        abort(404)
-    desparasitaciones = conn.execute(
-        "SELECT * FROM desparasitaciones WHERE animal_id=? AND empresa_id=? ORDER BY fecha_aplicacion DESC, id DESC",
-        (animal_id, current_empresa_id())
-    ).fetchall()
-    conn.close()
-    return render_template("desparasitaciones.html", animal=animal, desparasitaciones=desparasitaciones)
-
-@app.route("/desparasitaciones/nuevo/<int:animal_id>", methods=["POST"])
-def desparasitacion_nueva(animal_id):
-    tipo = request.form.get("tipo", "").strip()
-    fecha_aplicacion = request.form.get("fecha_aplicacion")
-    fecha_vencimiento = request.form.get("fecha_vencimiento")
-    conn = get_db()
-    conn.execute(
-        "INSERT INTO desparasitaciones (animal_id, tipo, fecha_aplicacion, fecha_vencimiento, empresa_id) VALUES (?, ?, ?, ?, ?)",
-        (animal_id, tipo, fecha_aplicacion, fecha_vencimiento, current_empresa_id()),
-    )
-    # Mantener visible la última desparasitación en la tabla de animales
-    try:
-        conn.execute(
-            "UPDATE animales SET ultima_desparasitacion=? WHERE id=? AND empresa_id=?",
-            (fecha_aplicacion, animal_id, current_empresa_id())
-        )
-    except Exception:
-        pass
-    conn.commit()
-    conn.close()
-    return redirect(url_for("desparasitaciones", animal_id=animal_id))
-
 # -------- Archivos subidos --------
 @app.route("/uploads/<filename>")
 def uploads(filename):
@@ -1312,7 +1192,7 @@ def motivo_nuevo():
     conn = get_db()
     conn.execute(
         "INSERT INTO motivos (nombre, duracion_minutos, precio_mensual, precio_particular, tipo, empresa_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (nombre, duracion, pm, pp, tipo, current_empresa_id()),
+        (nombre, duracion, pm, pp, tipo),
     )
     conn.commit()
     conn.close()
@@ -1432,7 +1312,7 @@ def agenda_nueva():
         cur.execute("""
             INSERT INTO agenda (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id, estado_pago, precio, lugar, atendida, empresa_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-        """, (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id, estado_pago, precio_cita, lugar, current_empresa_id()))
+        """, (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id, estado_pago, precio_cita, lugar))
 
         cita_id = cur.lastrowid
         _actualizar_flag_deudor(conn, int(cliente_id))
@@ -1492,27 +1372,19 @@ def agenda_lista():
         JOIN animales an ON a.animal_id = an.id
         JOIN doctores d ON a.doctor_id = d.id
         LEFT JOIN motivos m ON a.motivo_id = m.id
-        WHERE a.empresa_id = ?
     """
-    params = [current_empresa_id()]
-
-    if fecha:
-        query += " AND a.fecha = ?"
-        params.append(fecha)
-    if doctor_id:
-        query += " AND a.doctor_id = ?"
-        params.append(doctor_id)
-    if cliente_id:
-        query += " AND a.cliente_id = ?"
-        params.append(cliente_id)
+    condiciones, params = [], []
+    if fecha: condiciones.append("a.fecha = ?"); params.append(fecha)
+    if doctor_id: condiciones.append("a.doctor_id = ?"); params.append(doctor_id)
+    if cliente_id: condiciones.append("a.cliente_id = ?"); params.append(cliente_id)
     if estado == "Pendiente":
-        query += " AND a.atendida = 0"
+        condiciones.append("a.atendida = 0")
     elif estado == "Atendidas":
-        query += " AND a.atendida = 1"
-
+        condiciones.append("a.atendida = 1")
+    if condiciones: query += " WHERE " + " AND ".join(condiciones)
     query += " ORDER BY a.fecha DESC, a.hora DESC"
 
-    citas = conn.execute(query, params).fetchall()
+    citas = conn.execute(query, _query_params(params)).fetchall()
     doctores = conn.execute("SELECT id, nombre FROM doctores WHERE empresa_id=?", (current_empresa_id(),)).fetchall()
     clientes = conn.execute("SELECT id, nombre FROM clientes WHERE empresa_id=?", (current_empresa_id(),)).fetchall()
     conn.close()
