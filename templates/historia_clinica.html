@@ -61,7 +61,15 @@
     {% if imagenes[entry['id']] %}
     <div class="d-flex flex-wrap gap-2 mt-2">
       {% for img in imagenes[entry['id']] %}
-      <img src="{{ url_for('uploads', filename=img['filename']) }}" alt="Imagen" style="max-height: 150px; border-radius: 6px; box-shadow: 0 0 5px #888;">
+        {% set fn = img['filename'] %}
+        {% set lower = fn.lower() %}
+        {% if lower.endswith('.png') or lower.endswith('.jpg') or lower.endswith('.jpeg') or lower.endswith('.webp') or lower.endswith('.bmp') or lower.endswith('.gif') or lower.endswith('.tif') or lower.endswith('.tiff') %}
+          <a href="{{ url_for('uploads', filename=fn) }}" target="_blank">
+            <img src="{{ url_for('uploads', filename=fn) }}" alt="Adjunto" style="max-height: 150px; border-radius: 6px; box-shadow: 0 0 5px #888;">
+          </a>
+        {% else %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('uploads', filename=fn) }}" target="_blank">Abrir {{ fn }}</a>
+        {% endif %}
       {% endfor %}
     </div>
     {% endif %}

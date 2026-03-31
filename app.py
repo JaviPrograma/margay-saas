@@ -16,10 +16,12 @@ CLINIC_NAME = "MARGAY"
 CLINIC_WHATSAPP_RETURN = "agenda_lista"  # adónde volver luego de abrir WhatsApp
 app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', '/var/data/uploads' if (os.environ.get('RENDER') or os.environ.get('PORT')) else 'static/uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
-# Base de datos: en Render conviene /tmp; en local usa veterinaria.db
+# Base de datos: si existe disco persistente en /var/data, usarlo.
 _database_env = os.environ.get('DATABASE_PATH')
 if _database_env:
     DATABASE = _database_env
+elif os.path.isdir('/var/data'):
+    DATABASE = '/var/data/veterinaria.db'
 elif os.environ.get('RENDER') or os.environ.get('PORT'):
     DATABASE = '/tmp/veterinaria.db'
 else:
@@ -27,9 +29,8 @@ else:
 # Opcional: clave simple para el programador de tareas
 app.config.setdefault('TASK_SECRET', 'margay-task')
 
-# Si estamos en un entorno efímero (Render) y no existe la DB todavía,
-# copiamos la base incluida en el proyecto para arrancar con datos y esquema.
-if DATABASE.startswith('/tmp/') and not os.path.exists(DATABASE):
+# Si la DB objetivo no existe todavía y hay una base semilla en el proyecto, copiarla.
+if not os.path.exists(DATABASE):
     _seed_db = os.path.join(os.path.dirname(__file__), 'veterinaria.db')
     if os.path.exists(_seed_db):
         shutil.copy(_seed_db, DATABASE)
@@ -147,6 +148,7 @@ def init_db():
         password_hash TEXT NOT NULL,
         rol TEXT DEFAULT 'admin',
         activo INTEGER DEFAULT 1,
+        last_login_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(empresa_id, email),
         FOREIGN KEY(empresa_id) REFERENCES empresas(id)
@@ -261,6 +263,13 @@ def init_db():
     )""")
 
     # -------- Migraciones suaves --------
+    # Usuarios extras
+    for alter in [
+        "ALTER TABLE usuarios ADD COLUMN last_login_at TEXT"
+    ]:
+        try: cur.execute(alter)
+        except Exception: pass
+
     # Clientes extras
     for alter in [
         "ALTER TABLE clientes ADD COLUMN direccion TEXT",
@@ -276,7 +285,8 @@ def init_db():
     for alter in [
         "ALTER TABLE motivos ADD COLUMN precio_mensual REAL",
         "ALTER TABLE motivos ADD COLUMN precio_particular REAL",
-        "ALTER TABLE motivos ADD COLUMN tipo TEXT DEFAULT 'consulta'"
+        "ALTER TABLE motivos ADD COLUMN tipo TEXT DEFAULT 'consulta'",
+        "ALTER TABLE motivos ADD COLUMN requiere_historia INTEGER DEFAULT 1"
     ]:
         try: cur.execute(alter)
         except Exception: pass
@@ -643,6 +653,8 @@ def login():
                 (empresa_id, email)
             ).fetchone()
             if user and check_password_hash(user['password_hash'], password):
+                conn.execute('UPDATE usuarios SET last_login_at=CURRENT_TIMESTAMP WHERE id=?', (user['id'],))
+                conn.commit()
                 session['user_id'] = user['id']
                 session['empresa_id'] = user['empresa_id']
                 session['empresa_nombre'] = user['empresa_nombre']
@@ -674,14 +686,31 @@ def require_admin(view):
         return view(*args, **kwargs)
     return wrapped
 
+def is_master_admin():
+    return current_user_role() == 'admin' and current_empresa_id() == 1
+
+def require_master_admin(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not current_user_id() or not current_empresa_id():
+            return redirect(url_for('login'))
+        if not is_master_admin():
+            flash('Solo Margay puede administrar otras veterinarias.', 'danger')
+            return redirect(url_for('home'))
+        return view(*args, **kwargs)
+    return wrapped
+
 @app.route('/veterinarias')
-@require_admin
+@require_master_admin
 def veterinarias_panel():
     conn = get_db()
     try:
         empresas = conn.execute("""
             SELECT e.*,
-                   (SELECT COUNT(1) FROM usuarios u WHERE u.empresa_id=e.id AND u.activo=1) AS usuarios_activos
+                   (SELECT COUNT(1) FROM usuarios u WHERE u.empresa_id=e.id AND u.activo=1) AS usuarios_activos,
+                   (SELECT MAX(u.last_login_at) FROM usuarios u WHERE u.empresa_id=e.id) AS ultimo_acceso,
+                   (SELECT COUNT(1) FROM clientes c WHERE c.empresa_id=e.id) AS clientes_count,
+                   (SELECT COUNT(1) FROM agenda a WHERE a.empresa_id=e.id) AS citas_count
             FROM empresas e
             ORDER BY e.id
         """).fetchall()
@@ -690,7 +719,7 @@ def veterinarias_panel():
         conn.close()
 
 @app.route('/veterinarias/nueva', methods=['POST'])
-@require_admin
+@require_master_admin
 def veterinaria_nueva():
     nombre = (request.form.get('nombre') or '').strip()
     slug_raw = (request.form.get('slug') or '').strip().lower()
@@ -736,7 +765,7 @@ def veterinaria_nueva():
         conn.close()
 
 @app.route('/veterinarias/toggle/<int:empresa_id>', methods=['POST'])
-@require_admin
+@require_master_admin
 def veterinaria_toggle(empresa_id):
     if empresa_id == current_empresa_id():
         flash('No podés desactivar la veterinaria en la que estás logueado.', 'danger')
@@ -798,7 +827,8 @@ def inject_saas_context():
     return {
         'empresa_nombre': session.get('empresa_nombre', CLINIC_NAME),
         'user_nombre': session.get('user_nombre'),
-        'user_rol': session.get('rol')
+        'user_rol': session.get('rol'),
+        'user_can_manage_vets': is_master_admin()
     }
 
 @app.route("/")
@@ -1281,6 +1311,7 @@ def motivo_nuevo():
     precio_mensual = request.form.get("precio_mensual", "").strip()
     precio_particular = request.form.get("precio_particular", "").strip()
     tipo = request.form.get("tipo", "consulta").strip()
+    requiere_historia = 1 if request.form.get("requiere_historia") else 0
 
     if not duracion.isdigit():
         flash("Duración inválida", "danger")
@@ -1292,8 +1323,8 @@ def motivo_nuevo():
 
     conn = get_db()
     conn.execute(
-        "INSERT INTO motivos (nombre, duracion_minutos, precio_mensual, precio_particular, tipo, empresa_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (nombre, duracion, pm, pp, tipo, current_empresa_id()),
+        "INSERT INTO motivos (nombre, duracion_minutos, precio_mensual, precio_particular, tipo, requiere_historia, empresa_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (nombre, duracion, pm, pp, tipo, requiere_historia, current_empresa_id()),
     )
     conn.commit()
     conn.close()
@@ -1308,6 +1339,7 @@ def motivo_editar(id):
         precio_mensual = request.form.get("precio_mensual", "").strip()
         precio_particular = request.form.get("precio_particular", "").strip()
         tipo = request.form.get("tipo", "consulta").strip()
+        requiere_historia = 1 if request.form.get("requiere_historia") else 0
 
         if not duracion.isdigit():
             conn.close()
@@ -1319,8 +1351,8 @@ def motivo_editar(id):
         pp = _to_float(precio_particular)
 
         conn.execute(
-            "UPDATE motivos SET nombre=?, duracion_minutos=?, precio_mensual=?, precio_particular=?, tipo=? WHERE id=? AND empresa_id=?",
-            (nombre, duracion, pm, pp, tipo, id),
+            "UPDATE motivos SET nombre=?, duracion_minutos=?, precio_mensual=?, precio_particular=?, tipo=?, requiere_historia=? WHERE id=? AND empresa_id=?",
+            (nombre, duracion, pm, pp, tipo, requiere_historia, id, current_empresa_id()),
         )
         conn.commit()
         conn.close()
@@ -1536,7 +1568,7 @@ def atender_cita(cita_id):
                c.nombre  AS cliente_nombre, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion,
                an.nombre AS animal_nombre, an.cliente_id AS cid,
                d.nombre  AS doctor_nombre,
-               m.nombre  AS motivo_nombre, m.tipo AS motivo_tipo
+               m.nombre  AS motivo_nombre, m.tipo AS motivo_tipo, COALESCE(m.requiere_historia,1) AS motivo_requiere_historia
           FROM agenda a
           JOIN clientes c ON c.id = a.cliente_id
           JOIN animales an ON an.id = a.animal_id
@@ -1551,7 +1583,16 @@ def atender_cita(cita_id):
         return redirect(url_for("agenda_lista"))
 
     if request.method == "POST":
+        requiere_historia = int(cita["motivo_requiere_historia"] or 0) == 1
         descripcion = (request.form.get("descripcion") or "").strip()
+
+        if not requiere_historia:
+            cur.execute("UPDATE agenda SET atendida=1 WHERE id=?", (cita_id,))
+            conn.commit()
+            conn.close()
+            flash("Cita marcada como atendida. Este motivo no requiere historia clínica.", "success")
+            return redirect(url_for("agenda_lista"))
+
         if not descripcion:
             flash("La descripción/examen es obligatoria.", "warning")
             conn.close()
@@ -1604,7 +1645,7 @@ def atender_cita(cita_id):
         ))
         historia_id = cur.lastrowid
 
-        # Imágenes
+        # Adjuntos / imágenes
         if "imagen" in request.files:
             files = request.files.getlist("imagen")
             for file in files:

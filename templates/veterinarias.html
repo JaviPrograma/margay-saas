@@ -64,6 +64,9 @@
                 <th>Slug</th>
                 <th>Plan</th>
                 <th>Usuarios</th>
+                <th>Clientes</th>
+                <th>Citas</th>
+                <th>Último acceso</th>
                 <th>Estado</th>
                 <th class="text-end">Acción</th>
               </tr>
@@ -75,7 +78,10 @@
                 <td>{{ e.nombre }}</td>
                 <td><code>{{ e.slug or '-' }}</code></td>
                 <td><span class="badge bg-secondary">{{ e.plan }}</span></td>
-                <td>{{ e.usuarios_activos }}</td>
+                <td>{{ e.usuarios_activos or 0 }}</td>
+                <td>{{ e.clientes_count or 0 }}</td>
+                <td>{{ e.citas_count or 0 }}</td>
+                <td>{{ e.ultimo_acceso or '-' }}</td>
                 <td>
                   {% if e.activa %}
                     <span class="badge bg-success">Activa</span>
@@ -92,7 +98,7 @@
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="7" class="text-center py-4 text-muted">No hay veterinarias cargadas.</td></tr>
+              <tr><td colspan="10" class="text-center py-4 text-muted">No hay veterinarias cargadas.</td></tr>
               {% endfor %}
             </tbody>
           </table>
