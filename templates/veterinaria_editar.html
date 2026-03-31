@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}<title>VetCloud | Editar veterinaria</title>{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="card shadow-sm border-0">
+      <div class="card-body p-4">
+        <h2 class="mb-3">Editar veterinaria</h2>
+        <form method="post" class="row g-3">
+          <div class="col-12">
+            <label class="form-label">Nombre</label>
+            <input class="form-control" type="text" name="nombre" value="{{ empresa['nombre'] }}" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Slug</label>
+            <input class="form-control" type="text" name="slug" value="{{ empresa['slug'] or '' }}">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">Plan</label>
+            <select name="plan" class="form-select">
+              <option value="starter" {% if empresa['plan']=='starter' %}selected{% endif %}>Starter</option>
+              <option value="pro" {% if empresa['plan']=='pro' %}selected{% endif %}>Pro</option>
+              <option value="premium" {% if empresa['plan']=='premium' %}selected{% endif %}>Premium</option>
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Estado</label>
+            <select name="activa" class="form-select">
+              <option value="1" {% if empresa['activa'] %}selected{% endif %}>Activa</option>
+              <option value="0" {% if not empresa['activa'] %}selected{% endif %}>Inactiva</option>
+            </select>
+          </div>
+          <div class="col-12 d-flex gap-2">
+            <button class="btn btn-primary" type="submit">Guardar cambios</button>
+            <a class="btn btn-secondary" href="{{ url_for('veterinarias_panel') }}">Volver</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -20,7 +20,7 @@
           <div class="col-12"><small class="text-muted">Para Gmail suele funcionar mejor: puerto 465 + SSL. Para STARTTLS: puerto 587 + TLS.</small></div>
         <div class="col-md-12">
             <label class="form-label">Email de prueba</label>
-            <input class="form-control" name="test_email" type="email" value="{{ cfg['smtp_test_email'] if cfg and cfg['smtp_test_email'] else (cfg['smtp_user'] if cfg else '') }}" placeholder="correo@destino.com">
+            <input class="form-control" name="test_email" type="email" value="{{ cfg['smtp_user'] if cfg else '' }}" placeholder="correo@destino.com">
             <div class="form-text">Usalo con el botón <strong>Probar SMTP</strong> para verificar conexión, usuario, clave y envío real.</div>
           </div>
         </div>

@@ -92,7 +92,9 @@
       </ul>
       <div class="d-flex align-items-center gap-3 text-white ms-lg-3">
         <small class="opacity-75">{{ user_nombre or "" }}</small>
-        {% if user_can_manage_vets %}<a class="btn btn-sm btn-outline-light" href="{{ url_for('veterinarias_panel') }}">Veterinarias</a>{% endif %}
+        {% if can_manage_tenants %}{% if session.get('empresa_nombre') == 'Margay' or session.get('empresa_id') == 1 %}
+<a class="btn btn-sm btn-outline-light" href="{{ url_for('veterinarias_panel') }}">Veterinarias</a>
+{% endif %}{% endif %}
         {% if user_nombre %}<a class="btn btn-sm btn-outline-light" href="{{ url_for('mi_cuenta') }}">Mi cuenta</a><a class="btn btn-sm btn-light" href="{{ url_for('logout') }}">Salir</a>{% endif %}
       </div>
     </div>
