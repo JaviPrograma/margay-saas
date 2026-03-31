@@ -7,15 +7,13 @@ bp = Blueprint("recordatorios", __name__, url_prefix="/recordatorios")
 _db_env = os.environ.get("DATABASE_PATH")
 if _db_env:
     DB_PATH = _db_env
-elif os.path.isdir("/var/data"):
-    DB_PATH = "/var/data/veterinaria.db"
 elif os.environ.get("RENDER") or os.environ.get("PORT"):
     DB_PATH = "/tmp/veterinaria.db"
 else:
     DB_PATH = "veterinaria.db"
 
-# Si la base objetivo no existe todavía, copiamos la incluida en el proyecto
-if not os.path.exists(DB_PATH):
+# En Render, si la base en /tmp no existe todavía, copiamos la incluida en el proyecto
+if DB_PATH.startswith("/tmp/") and not os.path.exists(DB_PATH):
     _seed_db = os.path.join(os.path.dirname(__file__), "veterinaria.db")
     if os.path.exists(_seed_db):
         import shutil
@@ -71,8 +69,7 @@ def init_tables():
         smtp_tls INTEGER DEFAULT 1,
         smtp_ssl INTEGER DEFAULT 0,
         smtp_from TEXT,
-        smtp_from_name TEXT,
-        smtp_test_email TEXT
+        smtp_from_name TEXT
     )""")
 
     cur.execute("""
@@ -122,7 +119,6 @@ def init_tables():
     _ensure_column(cur, 'reminder_config', 'smtp_ssl', "smtp_ssl INTEGER DEFAULT 0")
     _ensure_column(cur, 'reminder_config', 'smtp_from', "smtp_from TEXT")
     _ensure_column(cur, 'reminder_config', 'smtp_from_name', "smtp_from_name TEXT")
-    _ensure_column(cur, 'reminder_config', 'smtp_test_email', "smtp_test_email TEXT")
 
     _ensure_column(cur, 'reminder_queue', 'empresa_id', "empresa_id INTEGER NOT NULL DEFAULT 1")
     _ensure_column(cur, 'reminder_queue', 'tipo', "tipo TEXT")
@@ -532,7 +528,6 @@ def config():
         1 if f.get('smtp_ssl') else 0,
         (f.get('smtp_from') or '').strip(),
         (f.get('smtp_from_name') or '').strip(),
-        (f.get('test_email') or '').strip(),
         emp
     )
     conn = db_conn(); conn.execute("""
@@ -541,7 +536,7 @@ def config():
             vacunas_enabled=?, vacunas_template=?, vacunas_hora=?, vacunas_dias_antes=?,
             despa_enabled=?, despa_template=?, despa_hora=?, despa_dias_antes=?, despa_intervalo_dias=?,
             part_enabled=?, part_template=?, part_hora=?, part_dia_mes=?,
-            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?, smtp_test_email=?
+            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?
         WHERE empresa_id=?
     """, values)
     conn.commit(); conn.close()
