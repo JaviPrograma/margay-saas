@@ -38,7 +38,6 @@ if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
 
 PUBLIC_ENDPOINTS = {'login', 'setup_saas', 'static'}
-SUPERADMIN_EMAIL = 'admin@margay.local'
 
 def current_empresa_id():
     return session.get('empresa_id')
@@ -46,13 +45,12 @@ def current_empresa_id():
 def current_user_id():
     return session.get('user_id')
 
-def current_user_email():
-    return (session.get('user_email') or '').strip().lower()
-
 
 def is_margay_master():
     email = (session.get('user_email') or '').strip().lower()
-    return email == SUPERADMIN_EMAIL
+    nombre = (session.get('empresa_nombre') or '').strip().lower()
+    empresa_id = session.get('empresa_id')
+    return email == 'admin@margay.local' or empresa_id == 1 or nombre == 'margay'
 
 def require_master_admin(view):
     @wraps(view)
@@ -432,6 +430,23 @@ def init_db():
         try: cur.execute(alter)
         except Exception: pass
 
+    # Auditoría de accesos para medir uso real del sistema
+    try:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS login_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            empresa_id INTEGER NOT NULL,
+            user_id INTEGER,
+            email TEXT,
+            ip TEXT,
+            user_agent TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(empresa_id) REFERENCES empresas(id),
+            FOREIGN KEY(user_id) REFERENCES usuarios(id)
+        )""")
+    except Exception:
+        pass
+
     # empresa por defecto para instalaciones viejas
     try:
         cur.execute("INSERT OR IGNORE INTO empresas (id, nombre, slug, plan, activa) VALUES (1, 'Margay', 'margay', 'starter', 1)")
@@ -456,19 +471,6 @@ def init_db():
             cur.execute(
                 "INSERT INTO usuarios (empresa_id, nombre, email, password_hash, rol, activo) VALUES (?, ?, ?, ?, 'admin', 1)",
                 (1, 'Administrador', 'admin@margay.local', generate_password_hash('admin1234'))
-            )
-    except Exception:
-        pass
-
-    # asegurar superadmin maestro
-    try:
-        master = cur.execute("SELECT id FROM usuarios WHERE LOWER(email)=?", (SUPERADMIN_EMAIL,)).fetchone()
-        if master:
-            cur.execute("UPDATE usuarios SET empresa_id=1, rol='admin', activo=1 WHERE id=?", (master['id'],))
-        else:
-            cur.execute(
-                "INSERT INTO usuarios (empresa_id, nombre, email, password_hash, rol, activo) VALUES (?, ?, ?, ?, 'admin', 1)",
-                (1, 'Administrador', SUPERADMIN_EMAIL, generate_password_hash('admin1234'))
             )
     except Exception:
         pass
@@ -685,7 +687,7 @@ def login():
                 session['rol'] = user['rol']
                 try:
                     conn.execute(
-                        'INSERT INTO login_audit (empresa_id, usuario_id, email, ip, user_agent) VALUES (?, ?, ?, ?, ?)',
+                        "INSERT INTO login_audit (empresa_id, user_id, email, ip, user_agent) VALUES (?, ?, ?, ?, ?)",
                         (user['empresa_id'], user['id'], user['email'], request.headers.get('X-Forwarded-For', request.remote_addr), request.headers.get('User-Agent'))
                     )
                     conn.commit()
@@ -798,72 +800,42 @@ def veterinaria_toggle(empresa_id):
         conn.close()
 
 
-
-def _scalar(conn, sql, params=()):
-    try:
-        row = conn.execute(sql, params).fetchone()
-        if row is None:
-            return 0
-        val = row[0] if not isinstance(row, sqlite3.Row) else row[0]
-        return val or 0
-    except Exception:
-        return 0
-
-
-def _empresa_usage_summary(conn):
-    empresas = conn.execute('SELECT * FROM empresas ORDER BY nombre').fetchall()
-    resumen = []
-    for e in empresas:
-        empresa_id = e['id']
-        usuarios_total = _scalar(conn, 'SELECT COUNT(1) FROM usuarios WHERE empresa_id=?', (empresa_id,))
-        usuarios_activos = _scalar(conn, 'SELECT COUNT(1) FROM usuarios WHERE empresa_id=? AND activo=1', (empresa_id,))
-        clientes_total = _scalar(conn, 'SELECT COUNT(1) FROM clientes WHERE empresa_id=?', (empresa_id,))
-        doctores_total = _scalar(conn, 'SELECT COUNT(1) FROM doctores WHERE empresa_id=?', (empresa_id,))
-        turnos_total = _scalar(conn, 'SELECT COUNT(1) FROM agenda WHERE empresa_id=?', (empresa_id,))
-        turnos_30 = _scalar(conn, "SELECT COUNT(1) FROM agenda WHERE empresa_id=? AND fecha >= date('now','-30 day')", (empresa_id,))
-        logins_7 = _scalar(conn, "SELECT COUNT(1) FROM login_audit WHERE empresa_id=? AND created_at >= datetime('now','-7 day')", (empresa_id,))
-        logins_30 = _scalar(conn, "SELECT COUNT(1) FROM login_audit WHERE empresa_id=? AND created_at >= datetime('now','-30 day')", (empresa_id,))
-        ultimo_login = conn.execute('SELECT MAX(created_at) FROM login_audit WHERE empresa_id=?', (empresa_id,)).fetchone()[0]
-        resumen.append({
-            'id': empresa_id,
-            'nombre': e['nombre'],
-            'slug': e['slug'],
-            'plan': e['plan'],
-            'activa': e['activa'],
-            'created_at': e['created_at'],
-            'usuarios_total': usuarios_total,
-            'usuarios_activos': usuarios_activos,
-            'clientes_total': clientes_total,
-            'doctores_total': doctores_total,
-            'turnos_total': turnos_total,
-            'turnos_30': turnos_30,
-            'logins_7': logins_7,
-            'logins_30': logins_30,
-            'ultimo_login': ultimo_login,
-            'estado_uso': 'En uso' if logins_30 or turnos_30 else 'Sin actividad 30d'
-        })
-    return resumen
-
-
 @app.route('/administrador')
 @require_master_admin
 def administrador_panel():
     conn = get_db()
     try:
-        resumen = _empresa_usage_summary(conn)
+        resumen = conn.execute("""
+            SELECT
+                e.id, e.nombre, e.slug, e.plan, e.activa,
+                (SELECT COUNT(1) FROM usuarios u WHERE u.empresa_id=e.id) AS usuarios_total,
+                (SELECT COUNT(1) FROM usuarios u WHERE u.empresa_id=e.id AND u.activo=1) AS usuarios_activos,
+                (SELECT COUNT(1) FROM clientes c WHERE c.empresa_id=e.id) AS clientes_total,
+                (SELECT COUNT(1) FROM agenda a WHERE a.empresa_id=e.id AND date(a.fecha) >= date('now','-30 day')) AS turnos_30,
+                (SELECT COUNT(1) FROM login_audit la WHERE la.empresa_id=e.id AND datetime(la.created_at) >= datetime('now','-30 day')) AS logins_30,
+                (SELECT MAX(la.created_at) FROM login_audit la WHERE la.empresa_id=e.id) AS ultimo_login
+            FROM empresas e
+            ORDER BY e.nombre COLLATE NOCASE
+        """).fetchall()
+
+        veterinarias_total = len(resumen)
+        veterinarias_activas = sum(1 for r in resumen if int(r['activa'] or 0) == 1)
+        veterinarias_con_uso = sum(1 for r in resumen if (r['logins_30'] or 0) > 0 or (r['turnos_30'] or 0) > 0)
+        logins_30_total = sum((r['logins_30'] or 0) for r in resumen)
+
         ultimos = conn.execute("""
-            SELECT la.created_at, la.email, e.nombre AS empresa_nombre
+            SELECT la.email, la.created_at, e.nombre AS empresa_nombre
             FROM login_audit la
             JOIN empresas e ON e.id = la.empresa_id
             ORDER BY la.created_at DESC
             LIMIT 20
         """).fetchall()
+
         kpis = {
-            'veterinarias_total': len(resumen),
-            'veterinarias_activas': sum(1 for r in resumen if int(r['activa'] or 0) == 1),
-            'veterinarias_con_uso': sum(1 for r in resumen if (r['logins_30'] or 0) > 0 or (r['turnos_30'] or 0) > 0),
-            'logins_30_total': sum(int(r['logins_30'] or 0) for r in resumen),
-            'turnos_30_total': sum(int(r['turnos_30'] or 0) for r in resumen),
+            'veterinarias_total': veterinarias_total,
+            'veterinarias_activas': veterinarias_activas,
+            'veterinarias_con_uso': veterinarias_con_uso,
+            'logins_30_total': logins_30_total,
         }
         return render_template('administrador.html', resumen=resumen, ultimos=ultimos, kpis=kpis)
     finally:
@@ -878,17 +850,14 @@ def administrador_veterinaria(empresa_id):
         empresa = conn.execute('SELECT * FROM empresas WHERE id=?', (empresa_id,)).fetchone()
         if not empresa:
             abort(404)
-        usuarios = conn.execute('SELECT * FROM usuarios WHERE empresa_id=? ORDER BY id', (empresa_id,)).fetchall()
-        ultimos = conn.execute('SELECT created_at, email, ip FROM login_audit WHERE empresa_id=? ORDER BY created_at DESC LIMIT 20', (empresa_id,)).fetchall()
+        usuarios = conn.execute('SELECT * FROM usuarios WHERE empresa_id=? ORDER BY activo DESC, rol DESC, nombre COLLATE NOCASE', (empresa_id,)).fetchall()
         metricas = {
-            'clientes_total': _scalar(conn, 'SELECT COUNT(1) FROM clientes WHERE empresa_id=?', (empresa_id,)),
-            'doctores_total': _scalar(conn, 'SELECT COUNT(1) FROM doctores WHERE empresa_id=?', (empresa_id,)),
-            'turnos_total': _scalar(conn, 'SELECT COUNT(1) FROM agenda WHERE empresa_id=?', (empresa_id,)),
-            'turnos_30': _scalar(conn, "SELECT COUNT(1) FROM agenda WHERE empresa_id=? AND fecha >= date('now','-30 day')", (empresa_id,)),
-            'logins_30': _scalar(conn, "SELECT COUNT(1) FROM login_audit WHERE empresa_id=? AND created_at >= datetime('now','-30 day')", (empresa_id,)),
-            'ultimo_login': conn.execute('SELECT MAX(created_at) FROM login_audit WHERE empresa_id=?', (empresa_id,)).fetchone()[0]
+            'clientes_total': conn.execute('SELECT COUNT(1) c FROM clientes WHERE empresa_id=?', (empresa_id,)).fetchone()['c'],
+            'turnos_30': conn.execute("SELECT COUNT(1) c FROM agenda WHERE empresa_id=? AND date(fecha) >= date('now','-30 day')", (empresa_id,)).fetchone()['c'],
+            'logins_30': conn.execute("SELECT COUNT(1) c FROM login_audit WHERE empresa_id=? AND datetime(created_at) >= datetime('now','-30 day')", (empresa_id,)).fetchone()['c'],
         }
-        return render_template('administrador_veterinaria.html', empresa=empresa, usuarios=usuarios, ultimos=ultimos, metricas=metricas)
+        ultimos = conn.execute('SELECT email, created_at, ip FROM login_audit WHERE empresa_id=? ORDER BY created_at DESC LIMIT 20', (empresa_id,)).fetchall()
+        return render_template('administrador_veterinaria.html', empresa=empresa, usuarios=usuarios, metricas=metricas, ultimos=ultimos)
     finally:
         conn.close()
 
@@ -897,56 +866,65 @@ def administrador_veterinaria(empresa_id):
 @require_master_admin
 def administrador_veterinaria_editar(empresa_id):
     nombre = (request.form.get('nombre') or '').strip()
-    slug = secure_filename((request.form.get('slug') or '').strip().lower()).replace('_','-')
+    slug = secure_filename((request.form.get('slug') or '').strip().lower()).replace('_', '-')
     plan = (request.form.get('plan') or 'starter').strip().lower()
-    activa = 1 if request.form.get('activa') == '1' else 0
-    if not nombre:
-        flash('El nombre de la veterinaria es obligatorio.', 'danger')
-        return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
-    if plan not in ('starter','pro','premium'):
+    activa = 1 if str(request.form.get('activa') or '1') == '1' else 0
+    if plan not in ('starter', 'pro', 'premium'):
         plan = 'starter'
     conn = get_db()
     try:
-        existente = conn.execute('SELECT id FROM empresas WHERE slug=? AND id<>?', (slug, empresa_id)).fetchone() if slug else None
-        if existente:
-            flash('Ese slug ya está en uso por otra veterinaria.', 'danger')
+        empresa = conn.execute('SELECT * FROM empresas WHERE id=?', (empresa_id,)).fetchone()
+        if not empresa:
+            abort(404)
+        if not nombre:
+            flash('El nombre de la veterinaria es obligatorio.', 'danger')
             return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
+        if empresa_id == current_empresa_id() and activa == 0:
+            flash('No podés desactivar la veterinaria en la que estás logueado.', 'danger')
+            return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
+        if slug:
+            dup = conn.execute('SELECT id FROM empresas WHERE slug=? AND id<>?', (slug, empresa_id)).fetchone()
+            if dup:
+                flash('Ese slug ya está en uso por otra veterinaria.', 'danger')
+                return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
         conn.execute('UPDATE empresas SET nombre=?, slug=?, plan=?, activa=? WHERE id=?', (nombre, slug or None, plan, activa, empresa_id))
         conn.commit()
-        flash('Veterinaria actualizada.', 'success')
+        flash('Veterinaria actualizada correctamente.', 'success')
         return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
     finally:
         conn.close()
 
 
-@app.route('/administrador/veterinaria/<int:empresa_id>/usuario/nuevo', methods=['POST'])
+@app.route('/administrador/veterinaria/<int:empresa_id>/usuarios/nuevo', methods=['POST'])
 @require_master_admin
 def administrador_usuario_nuevo(empresa_id):
     nombre = (request.form.get('nombre') or '').strip()
     email = (request.form.get('email') or '').strip().lower()
+    rol = (request.form.get('rol') or 'usuario').strip().lower()
     password = request.form.get('password') or ''
-    rol = (request.form.get('rol') or 'admin').strip().lower()
     if rol not in ('admin', 'usuario'):
         rol = 'usuario'
     if not nombre or not email or len(password) < 6:
-        flash('Completá nombre, email y contraseña de al menos 6 caracteres.', 'danger')
+        flash('Completá nombre, email y una contraseña de al menos 6 caracteres.', 'danger')
         return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
     conn = get_db()
     try:
+        empresa = conn.execute('SELECT id FROM empresas WHERE id=?', (empresa_id,)).fetchone()
+        if not empresa:
+            abort(404)
         existe = conn.execute('SELECT id FROM usuarios WHERE empresa_id=? AND LOWER(email)=?', (empresa_id, email)).fetchone()
         if existe:
-            flash('Ese email ya existe dentro de la veterinaria.', 'danger')
-        else:
-            conn.execute('INSERT INTO usuarios (empresa_id, nombre, email, password_hash, rol, activo) VALUES (?, ?, ?, ?, ?, 1)',
-                         (empresa_id, nombre, email, generate_password_hash(password), rol))
-            conn.commit()
-            flash('Usuario creado.', 'success')
+            flash('Ya existe un usuario con ese email en esta veterinaria.', 'danger')
+            return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
+        conn.execute('INSERT INTO usuarios (empresa_id, nombre, email, password_hash, rol, activo) VALUES (?, ?, ?, ?, ?, 1)', (empresa_id, nombre, email, generate_password_hash(password), rol))
+        conn.commit()
+        flash('Usuario creado correctamente.', 'success')
         return redirect(url_for('administrador_veterinaria', empresa_id=empresa_id))
     finally:
         conn.close()
 
 
-@app.route('/administrador/usuario/<int:user_id>/toggle', methods=['POST'])
+@app.route('/administrador/usuarios/<int:user_id>/toggle', methods=['POST'])
 @require_master_admin
 def administrador_usuario_toggle(user_id):
     conn = get_db()
@@ -954,8 +932,8 @@ def administrador_usuario_toggle(user_id):
         user = conn.execute('SELECT * FROM usuarios WHERE id=?', (user_id,)).fetchone()
         if not user:
             abort(404)
-        if (user['email'] or '').strip().lower() == SUPERADMIN_EMAIL:
-            flash('No podés desactivar la cuenta superadministradora.', 'danger')
+        if (user['email'] or '').strip().lower() == 'admin@margay.local':
+            flash('No se puede desactivar la cuenta superadministradora.', 'danger')
             return redirect(url_for('administrador_veterinaria', empresa_id=user['empresa_id']))
         nuevo = 0 if int(user['activo'] or 0) == 1 else 1
         conn.execute('UPDATE usuarios SET activo=? WHERE id=?', (nuevo, user_id))
@@ -966,21 +944,28 @@ def administrador_usuario_toggle(user_id):
         conn.close()
 
 
-@app.route('/administrador/usuario/<int:user_id>/password', methods=['POST'])
+@app.route('/administrador/usuarios/<int:user_id>/password', methods=['POST'])
 @require_master_admin
 def administrador_usuario_password(user_id):
-    nueva = request.form.get('password') or ''
-    if len(nueva) < 6:
+    password = request.form.get('password') or ''
+    if len(password) < 6:
         flash('La nueva contraseña debe tener al menos 6 caracteres.', 'danger')
-        return redirect(request.referrer or url_for('administrador_panel'))
+        conn = get_db()
+        try:
+            user = conn.execute('SELECT empresa_id FROM usuarios WHERE id=?', (user_id,)).fetchone()
+            if user:
+                return redirect(url_for('administrador_veterinaria', empresa_id=user['empresa_id']))
+        finally:
+            conn.close()
+        return redirect(url_for('administrador_panel'))
     conn = get_db()
     try:
         user = conn.execute('SELECT * FROM usuarios WHERE id=?', (user_id,)).fetchone()
         if not user:
             abort(404)
-        conn.execute('UPDATE usuarios SET password_hash=? WHERE id=?', (generate_password_hash(nueva), user_id))
+        conn.execute('UPDATE usuarios SET password_hash=? WHERE id=?', (generate_password_hash(password), user_id))
         conn.commit()
-        flash(f'Contraseña actualizada para {user['email']}.', 'success')
+        flash('Contraseña actualizada correctamente.', 'success')
         return redirect(url_for('administrador_veterinaria', empresa_id=user['empresa_id']))
     finally:
         conn.close()
@@ -1029,6 +1014,7 @@ def inject_saas_context():
     return {
         'empresa_nombre': session.get('empresa_nombre', CLINIC_NAME),
         'user_nombre': session.get('user_nombre'),
+        'user_email': session.get('user_email'),
         'user_rol': session.get('rol'),
         'is_margay_master': is_margay_master()
     }
