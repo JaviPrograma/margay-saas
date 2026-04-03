@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-3"><div class="card shadow-sm border-0"><div class="card-body"><div class="text-muted small">Veterinarias</div><div class="display-6">{{ kpis.veterinarias_total }}</div></div></div></div>
+  <div class="col-12 col-md-3"><div class="card shadow-sm border-0"><div class="card-body"><div class="text-muted small">Activas</div><div class="display-6">{{ kpis.veterinarias_activas }}</div></div></div></div>
+  <div class="col-12 col-md-3"><div class="card shadow-sm border-0"><div class="card-body"><div class="text-muted small">Con uso reciente</div><div class="display-6">{{ kpis.veterinarias_con_uso }}</div></div></div></div>
+  <div class="col-12 col-md-3"><div class="card shadow-sm border-0"><div class="card-body"><div class="text-muted small">Logins 30 días</div><div class="display-6">{{ kpis.logins_30_total }}</div></div></div></div>
+</div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white"><strong>Veterinarias</strong></div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-primary"><tr><th>ID</th><th>Nombre</th><th>Slug</th><th>Plan</th><th>Estado</th><th>Usuarios</th><th>Clientes</th><th>Turnos 30 días</th><th>Último login</th><th></th></tr></thead>
+      <tbody>
+        {% for item in resumen %}
+        <tr>
+          <td>{{ item.id }}</td>
+          <td>{{ item.nombre }}</td>
+          <td>{{ item.slug }}</td>
+          <td>{{ item.plan }}</td>
+          <td>{% if item.activa %}<span class="badge text-bg-success">Activa</span>{% else %}<span class="badge text-bg-danger">Suspendida</span>{% endif %}</td>
+          <td>{{ item.usuarios_activos }}/{{ item.usuarios_total }}</td>
+          <td>{{ item.clientes_total }}</td>
+          <td>{{ item.turnos_30 }}</td>
+          <td>{{ item.ultimo_login or '-' }}</td>
+          <td><a class="btn btn-sm btn-primary" href="{{ url_for('administrador_veterinaria', empresa_id=item.id) }}">Abrir</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white"><strong>Últimos accesos</strong></div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Fecha</th><th>Veterinaria</th><th>Usuario</th><th>IP</th></tr></thead>
+      <tbody>
+        {% for row in ultimos %}
+        <tr><td>{{ row.created_at }}</td><td>{{ row.empresa_nombre }}</td><td>{{ row.email }}</td><td>{{ row.ip or '-' }}</td></tr>
+        {% else %}
+        <tr><td colspan="4" class="text-center text-muted py-3">Sin accesos todavía.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

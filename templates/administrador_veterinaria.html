@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h2 class="mb-0">{{ empresa.nombre }}</h2>
+    <div class="text-muted">Slug: {{ empresa.slug or '-' }}</div>
+  </div>
+  <a href="{{ url_for('administrador_panel') }}" class="btn btn-outline-primary">Volver</a>
+</div>
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-4"><div class="card shadow-sm border-0"><div class="card-body"><div class="text-muted small">Clientes</div><div class="display-6">{{ metricas.clientes_total }}</div></div></div></div>
+  <div class="col-12 col-md-4"><div class="card shadow-sm border-0"><div class="card-body"><div class="text-muted small">Turnos 30 días</div><div class="display-6">{{ metricas.turnos_30 }}</div></div></div></div>
+  <div class="col-12 col-md-4"><div class="card shadow-sm border-0"><div class="card-body"><div class="text-muted small">Logins 30 días</div><div class="display-6">{{ metricas.logins_30 }}</div></div></div></div>
+</div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white"><strong>Estado de la veterinaria</strong></div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('administrador_veterinaria_editar', empresa_id=empresa.id) }}" class="row g-3">
+      <div class="col-md-4"><label class="form-label">Nombre</label><input class="form-control" type="text" name="nombre" value="{{ empresa.nombre }}" required></div>
+      <div class="col-md-4"><label class="form-label">Slug</label><input class="form-control" type="text" name="slug" value="{{ empresa.slug or '' }}"></div>
+      <div class="col-md-2"><label class="form-label">Plan</label><input class="form-control" type="text" name="plan" value="{{ empresa.plan or 'starter' }}"></div>
+      <div class="col-md-2 d-flex align-items-end"><div class="form-check form-switch"><input class="form-check-input" type="checkbox" name="activa" id="activa" {% if empresa.activa %}checked{% endif %}><label class="form-check-label" for="activa">Activa</label></div></div>
+      <div class="col-12"><button class="btn btn-primary">Guardar cambios</button></div>
+    </form>
+  </div>
+</div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white"><strong>Crear usuario</strong></div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('administrador_usuario_nuevo', empresa_id=empresa.id) }}" class="row g-3">
+      <div class="col-md-4"><input class="form-control" name="nombre" placeholder="Nombre" required></div>
+      <div class="col-md-4"><input class="form-control" name="email" type="email" placeholder="Email" required></div>
+      <div class="col-md-2"><select class="form-select" name="rol"><option value="admin">Admin</option><option value="operador">Operador</option></select></div>
+      <div class="col-md-2"><input class="form-control" name="password" type="text" placeholder="Clave" required></div>
+      <div class="col-12"><button class="btn btn-primary">Crear usuario</button></div>
+    </form>
+  </div>
+</div>
+<div class="card shadow-sm border-0 mb-4">
+  <div class="card-header bg-white"><strong>Usuarios</strong></div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-primary"><tr><th>ID</th><th>Nombre</th><th>Email</th><th>Rol</th><th>Estado</th><th>Cambiar clave</th><th>Acciones</th></tr></thead>
+      <tbody>
+        {% for user in usuarios %}
+        <tr>
+          <td>{{ user.id }}</td><td>{{ user.nombre }}</td><td>{{ user.email }}</td><td>{{ user.rol }}</td>
+          <td>{% if user.activo %}<span class="badge text-bg-success">Activo</span>{% else %}<span class="badge text-bg-danger">Suspendido</span>{% endif %}</td>
+          <td>
+            <form method="post" action="{{ url_for('administrador_usuario_password', user_id=user.id) }}" class="d-flex gap-2">
+              <input class="form-control form-control-sm" type="text" name="password" placeholder="Nueva clave" required>
+              <button class="btn btn-sm btn-outline-primary">Guardar</button>
+            </form>
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('administrador_usuario_toggle', user_id=user.id) }}">
+              <button class="btn btn-sm {% if user.activo %}btn-outline-danger{% else %}btn-outline-success{% endif %}">{% if user.activo %}Suspender{% else %}Reactivar{% endif %}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="card shadow-sm border-0">
+  <div class="card-header bg-white"><strong>Últimos accesos</strong></div>
+  <div class="table-responsive">
+    <table class="table table-sm mb-0">
+      <thead><tr><th>Fecha</th><th>Usuario</th><th>IP</th></tr></thead>
+      <tbody>
+        {% for row in ultimos %}
+        <tr><td>{{ row.created_at }}</td><td>{{ row.email }}</td><td>{{ row.ip or '-' }}</td></tr>
+        {% else %}
+        <tr><td colspan="3" class="text-center text-muted py-3">Sin accesos todavía.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

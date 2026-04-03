@@ -9,6 +9,10 @@
     <a href="{{ url_for('agenda_nueva') }}" class="btn btn-primary btn-lg">Nueva Cita</a>
     <a href="{{ url_for('facturacion') }}" class="btn btn-primary btn-lg">Facturación</a>
     <a href="{{ url_for('recordatorios.dashboard') }}" class="btn btn-primary btn-lg">Recordatorios</a>
+    {% if is_master_admin %}
+    <a href="{{ url_for('administrador_panel') }}" class="btn btn-dark btn-lg">Administrador general</a>
+    <a href="{{ url_for('veterinarias_panel') }}" class="btn btn-outline-primary btn-lg">Veterinarias</a>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
