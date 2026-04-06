@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
   <div>
     <h2 class="mb-1">Veterinarias</h2>
-    <p class="text-muted mb-0">Alta, control y seguimiento de uso del SaaS.</p>
+    <p class="text-muted mb-0">Alta, control y administración del SaaS.</p>
   </div>
 </div>
 
@@ -40,7 +40,7 @@
           </div>
           <div class="col-12">
             <label class="form-label">Contraseña inicial</label>
-            <input type="text" name="password" class="form-control" required>
+            <input type="text" name="password" class="form-control" required minlength="6">
           </div>
           <div class="col-12">
             <button class="btn btn-primary w-100" type="submit">Crear veterinaria</button>
@@ -52,16 +52,15 @@
 
   <div class="col-lg-7">
     <div class="card shadow-sm border-0">
-      <div class="card-header bg-light"><strong>Uso y administración</strong></div>
+      <div class="card-header bg-light"><strong>Veterinarias cargadas</strong></div>
       <div class="table-responsive">
         <table class="table table-hover align-middle mb-0">
           <thead>
             <tr>
+              <th>ID</th>
               <th>Veterinaria</th>
               <th>Plan</th>
-              <th>Último acceso</th>
-              <th>Clientes</th>
-              <th>Citas</th>
+              <th>Usuarios activos</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
@@ -69,14 +68,13 @@
           <tbody>
             {% for e in empresas %}
             <tr>
+              <td>{{ e.id }}</td>
               <td>
                 <div class="fw-semibold">{{ e.nombre }}</div>
-                <div class="small text-muted">{{ e.slug }}</div>
+                <div class="small text-muted">{{ e.slug or '-' }}</div>
               </td>
-              <td>{{ e.plan|capitalize }}</td>
-              <td>{{ e.last_seen_at or 'Sin ingresos aún' }}</td>
-              <td>{{ e.clientes_total }}</td>
-              <td>{{ e.citas_total }}</td>
+              <td>{{ (e.plan or 'starter')|capitalize }}</td>
+              <td>{{ e.usuarios_activos or 0 }}</td>
               <td>
                 {% if e.activa %}
                   <span class="badge bg-success">Activa</span>
@@ -86,13 +84,7 @@
               </td>
               <td>
                 <div class="d-flex flex-column gap-2">
-                  <a href="{{ url_for('veterinaria_editar', empresa_id=e.id) }}" class="btn btn-sm btn-outline-primary">Editar</a>
-                  <form method="post" action="{{ url_for('veterinaria_reset_password', empresa_id=e.id) }}">
-                    <div class="input-group input-group-sm">
-                      <input type="text" class="form-control" name="nueva_password" placeholder="Nueva clave" required minlength="6">
-                      <button class="btn btn-outline-warning" type="submit">Cambiar clave</button>
-                    </div>
-                  </form>
+                  <a href="{{ url_for('administrador_veterinaria', empresa_id=e.id) }}" class="btn btn-sm btn-outline-primary">Abrir</a>
                   <form method="post" action="{{ url_for('veterinaria_toggle', empresa_id=e.id) }}">
                     <button class="btn btn-sm btn-outline-dark" type="submit">
                       {% if e.activa %}Desactivar{% else %}Activar{% endif %}
@@ -102,7 +94,7 @@
               </td>
             </tr>
             {% else %}
-            <tr><td colspan="7" class="text-center text-muted py-4">No hay veterinarias cargadas.</td></tr>
+            <tr><td colspan="6" class="text-center text-muted py-4">No hay veterinarias cargadas.</td></tr>
             {% endfor %}
           </tbody>
         </table>
