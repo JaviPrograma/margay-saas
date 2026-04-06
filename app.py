@@ -2,7 +2,8 @@ from flask import Flask, render_template, request, redirect, url_for, abort, sen
 import sqlite3
 import os, re, sqlite3, shutil
 from werkzeug.utils import secure_filename
-from datetime import datetime, timedelta, time, date
+from datetime import datetime, timedelta, time, date, timezone
+from zoneinfo import ZoneInfo
 from urllib.parse import quote
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -98,6 +99,70 @@ def _fetchall_empresa(conn, sql, params=(), prepend=False):
 
 def _execute_empresa(conn, sql, params=(), prepend=False):
     return conn.execute(sql, _query_params(params, prepend=prepend))
+
+
+def _get_browser_timezone() -> str:
+    tz_name = (request.cookies.get('browser_tz') or '').strip()
+    if tz_name:
+        try:
+            ZoneInfo(tz_name)
+            return tz_name
+        except Exception:
+            pass
+    return 'America/Montevideo'
+
+
+def _parse_datetime_value(value):
+    if value in (None, ''):
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        candidates = [
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%d %H:%M',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S.%f',
+        ]
+        for fmt in candidates:
+            try:
+                return datetime.strptime(raw, fmt)
+            except Exception:
+                continue
+        try:
+            return datetime.fromisoformat(raw.replace('Z', '+00:00'))
+        except Exception:
+            return None
+    return None
+
+
+def format_datetime_local(value, fmt='%Y-%m-%d %H:%M:%S'):
+    dt = _parse_datetime_value(value)
+    if not dt:
+        return '-'
+    try:
+        tz_name = _get_browser_timezone()
+        target_tz = ZoneInfo(tz_name)
+    except Exception:
+        target_tz = ZoneInfo('America/Montevideo')
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.astimezone(target_tz).strftime(fmt)
+
+
+app.jinja_env.filters['datetime_local'] = format_datetime_local
+
+
+@app.context_processor
+def inject_timezone_helpers():
+    return {
+        'browser_timezone': _get_browser_timezone()
+    }
 
 @app.before_request
 def _saas_guard():
