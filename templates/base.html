@@ -95,7 +95,7 @@
         {% endif %}
       </ul>
       <div class="d-flex align-items-center gap-2 text-white ms-lg-3 mt-2 mt-lg-0">
-        <small class="opacity-75 d-none d-lg-inline">{{ user_nombre or "" }}</small>
+        {# nombre de usuario oculto en barra superior por pedido del usuario #}
         {% if is_master_admin %}
         <a class="btn btn-sm btn-outline-light" href="{{ url_for('veterinarias_panel') }}">Veterinarias</a>
         {% endif %}
