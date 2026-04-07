@@ -1707,8 +1707,26 @@ def agenda_nueva():
 
     # --- GET: armar datos para el form (JSON-serializable para buscador) ---
     conn = get_db()
-    clientes_rows = conn.execute("SELECT id, nombre, cedula FROM clientes WHERE empresa_id=? ORDER BY nombre COLLATE NOCASE", (current_empresa_id(),)).fetchall()
-    clientes = [{"id": r["id"], "nombre": r["nombre"], "cedula": r["cedula"]} for r in clientes_rows]
+    clientes_rows = conn.execute("""
+        SELECT c.id, c.nombre, c.cedula,
+               COALESCE(GROUP_CONCAT(a.nombre, ' || '), '') AS animales
+        FROM clientes c
+        LEFT JOIN animales a
+               ON a.cliente_id = c.id
+              AND a.empresa_id = c.empresa_id
+        WHERE c.empresa_id = ?
+        GROUP BY c.id, c.nombre, c.cedula
+        ORDER BY c.nombre COLLATE NOCASE
+    """, (current_empresa_id(),)).fetchall()
+    clientes = []
+    for r in clientes_rows:
+        animales = [x.strip() for x in (r["animales"] or '').split(' || ') if x and x.strip()]
+        clientes.append({
+            "id": r["id"],
+            "nombre": r["nombre"],
+            "cedula": r["cedula"],
+            "animales": animales,
+        })
 
     motivos_rows = conn.execute("SELECT * FROM motivos WHERE empresa_id=?", (current_empresa_id(),)).fetchall()
     motivos = [dict(m) for m in motivos_rows]
