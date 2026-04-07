@@ -12,10 +12,14 @@
       <label for="cliente_id" class="form-label">Cliente</label>
 
       <!-- Buscador por nombre o cédula (filtra el select de abajo) -->
-      <input type="text"
-             id="buscador_cliente"
-             class="form-control mb-2"
-             placeholder="Buscar por nombre o cédula..." />
+      <div class="position-relative mb-2">
+        <input type="text"
+               id="buscador_cliente"
+               class="form-control"
+               placeholder="Buscar por cliente, cédula o animal..."
+               autocomplete="off" />
+        <div id="sugerencias_cliente" class="list-group position-absolute w-100 shadow-sm d-none" style="z-index: 1050; max-height: 260px; overflow-y: auto;"></div>
+      </div>
 
       <select class="form-select" id="cliente_id" name="cliente_id" required>
         <option value="" {% if not preset.cliente_id %}selected{% endif %} disabled>Seleccione un cliente</option>
@@ -124,22 +128,39 @@ function recalcPrecio(){
   el && el.addEventListener('change', recalcPrecio);
 });
 
-// Cargar animales cuando cambia cliente
-document.getElementById("cliente_id").addEventListener("change", function() {
-  var clienteId = this.value;
-  var animalSelect = document.getElementById("animal_id");
+function loadAnimales(clienteId, preferredAnimalName=null, preferredAnimalId=null){
+  const animalSelect = document.getElementById("animal_id");
+  if(!clienteId){
+    animalSelect.disabled = true;
+    animalSelect.innerHTML = '<option value="">Seleccione un cliente primero</option>';
+    return Promise.resolve();
+  }
+
   animalSelect.innerHTML = '<option>Cargando...</option>';
   animalSelect.disabled = true;
 
-  fetch('/api/animales/' + clienteId)
+  return fetch('/api/animales/' + clienteId)
     .then(response => response.json())
     .then(data => {
       animalSelect.disabled = false;
       animalSelect.innerHTML = '<option value="" selected disabled>Seleccione un animal</option>';
+
+      const normalizarTexto = (s) => (s || '')
+        .toString()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .trim();
+
       data.forEach(function(animal) {
-        var option = document.createElement("option");
+        const option = document.createElement("option");
         option.value = animal.id;
         option.text = animal.nombre;
+        if (preferredAnimalId && String(preferredAnimalId) === String(animal.id)) {
+          option.selected = true;
+        } else if (preferredAnimalName && normalizarTexto(animal.nombre) === normalizarTexto(preferredAnimalName)) {
+          option.selected = true;
+        }
         animalSelect.appendChild(option);
       });
       recalcPrecio();
@@ -148,16 +169,34 @@ document.getElementById("cliente_id").addEventListener("change", function() {
       animalSelect.disabled = true;
       animalSelect.innerHTML = '<option>Error al cargar animales</option>';
     });
+}
+
+document.getElementById("cliente_id").addEventListener("change", function() {
+  loadAnimales(this.value);
 });
 
-// === Buscador por nombre o cédula ===
-const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula}, ...]
+// === Buscador con sugerencias por cliente, cédula o animal ===
+const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula, animales}, ...]
 (function(){
   const input = document.getElementById('buscador_cliente');
   const select = document.getElementById('cliente_id');
+  const sugerencias = document.getElementById('sugerencias_cliente');
 
-  function normalizar(s){
-    return (s || '').toString().toLowerCase();
+  function normalizarTexto(s){
+    return (s || '')
+      .toString()
+      .normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .toLowerCase()
+      .trim();
+  }
+
+  function normalizarCedula(s){
+    return (s || '').toString().replace(/\D/g, '');
+  }
+
+  function labelCliente(c){
+    return c.nombre + (c.cedula ? ' — ' + c.cedula : '');
   }
 
   function render(options, keepValue){
@@ -166,21 +205,116 @@ const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula}, ...]
     options.forEach(c => {
       const opt = document.createElement('option');
       opt.value = c.id;
-      opt.textContent = c.nombre + (c.cedula ? ' — ' + c.cedula : '');
+      opt.textContent = labelCliente(c);
       if(curr && String(curr) === String(c.id)) opt.selected = true;
       select.appendChild(opt);
     });
   }
 
+  function ocultarSugerencias(){
+    sugerencias.classList.add('d-none');
+    sugerencias.innerHTML = '';
+  }
+
+  function seleccionarCliente(cliente, animalPreferido=null){
+    render(BASE, true);
+    select.value = String(cliente.id);
+    input.value = labelCliente(cliente);
+    ocultarSugerencias();
+    loadAnimales(cliente.id, animalPreferido).then(() => {
+      recalcPrecio();
+    });
+  }
+
+  function mostrarSugerencias(resultados, qTexto){
+    sugerencias.innerHTML = '';
+
+    if(!resultados.length){
+      const empty = document.createElement('button');
+      empty.type = 'button';
+      empty.className = 'list-group-item list-group-item-action disabled';
+      empty.textContent = 'Sin resultados';
+      sugerencias.appendChild(empty);
+      sugerencias.classList.remove('d-none');
+      return;
+    }
+
+    resultados.slice(0, 8).forEach(({cliente, animalMatch}) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'list-group-item list-group-item-action';
+      btn.innerHTML = '<div><strong>' + cliente.nombre + '</strong>' +
+                      (cliente.cedula ? ' <span class="text-muted">— ' + cliente.cedula + '</span>' : '') +
+                      '</div>' +
+                      (animalMatch ? '<small class="text-muted">Animal: ' + animalMatch + '</small>' : '<small class="text-muted">Cliente</small>');
+      btn.addEventListener('click', () => seleccionarCliente(cliente, animalMatch || null));
+      sugerencias.appendChild(btn);
+    });
+    sugerencias.classList.remove('d-none');
+  }
+
   render(BASE, true);
 
+  input.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      const primer = sugerencias.querySelector('button.list-group-item-action:not(.disabled)');
+      if(primer) primer.click();
+    }
+  });
+
   input.addEventListener('input', () => {
-    const q = normalizar(input.value);
-    if(!q){ render(BASE, true); return; }
-    const fil = BASE.filter(c => {
-      return normalizar(c.nombre).includes(q) || normalizar(c.cedula).includes(q);
-    });
-    render(fil, false);
+    const raw = input.value;
+    const qTexto = normalizarTexto(raw);
+    const qCedula = normalizarCedula(raw);
+
+    if(!qTexto && !qCedula){
+      render(BASE, true);
+      ocultarSugerencias();
+      return;
+    }
+
+    const resultados = BASE.map(cliente => {
+      const animales = Array.isArray(cliente.animales) ? cliente.animales : [];
+      const matchNombre = normalizarTexto(cliente.nombre).includes(qTexto);
+      const matchCedula = qCedula ? normalizarCedula(cliente.cedula).includes(qCedula) : false;
+      const animalMatch = animales.find(a => normalizarTexto(a).includes(qTexto)) || null;
+      return { cliente, matchNombre, matchCedula, animalMatch };
+    }).filter(x => x.matchNombre || x.matchCedula || x.animalMatch)
+      .sort((a, b) => {
+        const score = (x) => {
+          let s = 0;
+          if(normalizarTexto(x.cliente.nombre) === qTexto) s += 100;
+          if(x.matchCedula && normalizarCedula(x.cliente.cedula) === qCedula && qCedula) s += 90;
+          if(x.animalMatch && normalizarTexto(x.animalMatch) === qTexto) s += 80;
+          if(x.matchNombre) s += 20;
+          if(x.matchCedula) s += 15;
+          if(x.animalMatch) s += 10;
+          return s;
+        };
+        return score(b) - score(a);
+      });
+
+    render(resultados.map(x => x.cliente), false);
+    mostrarSugerencias(resultados, qTexto);
+  });
+
+  input.addEventListener('focus', () => {
+    if(input.value.trim()) input.dispatchEvent(new Event('input'));
+  });
+
+  document.addEventListener('click', (e) => {
+    if(!sugerencias.contains(e.target) && e.target !== input){
+      ocultarSugerencias();
+    }
+  });
+
+  select.addEventListener('change', function(){
+    const cliente = BASE.find(c => String(c.id) === String(this.value));
+    if(cliente){
+      input.value = labelCliente(cliente);
+    }
+    ocultarSugerencias();
   });
 })();
 
@@ -190,20 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if(PRESET.cliente_id){
     const selC = document.getElementById('cliente_id');
     selC.value = String(PRESET.cliente_id);
-    // disparo carga de animales y selecciono el preset cuando lleguen
-    const selA = document.getElementById('animal_id');
-    fetch('/api/animales/' + PRESET.cliente_id)
-      .then(r=>r.json())
-      .then(list=>{
-        selA.disabled = false;
-        selA.innerHTML = '<option value="" disabled>Seleccione un animal</option>';
-        list.forEach(a=>{
-          const op = document.createElement('option');
-          op.value = a.id; op.textContent = a.nombre;
-          if(PRESET.animal_id && Number(PRESET.animal_id)===Number(a.id)) op.selected = true;
-          selA.appendChild(op);
-        });
-      });
+    loadAnimales(PRESET.cliente_id, null, PRESET.animal_id);
   }
   if(PRESET.doctor_id){ document.getElementById('doctor_id').value = String(PRESET.doctor_id); }
   if(PRESET.motivo_id){ document.getElementById('motivo_id').value = String(PRESET.motivo_id); }
