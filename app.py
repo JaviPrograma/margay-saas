@@ -749,7 +749,7 @@ def login():
                 try:
                     conn.execute(
                         'INSERT INTO login_audit (empresa_id, user_id, email, ip, created_at) VALUES (?, ?, ?, ?, ?)',
-                        (user['empresa_id'], user['id'], user['email'], request.headers.get('X-Forwarded-For', request.remote_addr), datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+                        (user['empresa_id'], user['id'], user['email'], request.headers.get('X-Forwarded-For', request.remote_addr), datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
                     )
                     conn.commit()
                 except Exception:
@@ -1088,6 +1088,7 @@ def home():
 
 # -------- Doctores --------
 @app.route("/doctores")
+@require_admin
 def doctores():
     conn = get_db()
     doctores = _fetchall_empresa(conn, "SELECT * FROM doctores WHERE empresa_id=?")
@@ -1095,6 +1096,7 @@ def doctores():
     return render_template("doctores.html", doctores=doctores, doctor_edit=None)
 
 @app.route("/doctores/nuevo", methods=["POST"])
+@require_admin
 def doctor_nuevo():
     nombre = request.form.get("nombre", "").strip()
     especialidad = request.form.get("especialidad", "").strip()
@@ -1105,6 +1107,7 @@ def doctor_nuevo():
     return redirect(url_for("doctores"))
 
 @app.route("/doctores/editar/<int:id>", methods=["GET", "POST"])
+@require_admin
 def doctor_editar(id):
     conn = get_db()
     if request.method == "POST":
@@ -1122,6 +1125,7 @@ def doctor_editar(id):
     return render_template("doctores.html", doctores=[], doctor_edit=doctor)
 
 @app.route("/doctores/eliminar/<int:id>")
+@require_admin
 def doctor_eliminar(id):
     conn = get_db()
     conn.execute("DELETE FROM doctores WHERE id=? AND empresa_id=?", (id, current_empresa_id()))
@@ -1542,6 +1546,7 @@ def uploads(filename):
 
 # -------- Motivos (precios + tipo) --------
 @app.route("/motivos")
+@require_admin
 def motivos():
     conn = get_db()
     motivos = _fetchall_empresa(conn, "SELECT * FROM motivos WHERE empresa_id=?")
@@ -1549,6 +1554,7 @@ def motivos():
     return render_template("motivos.html", motivos=motivos, motivo_edit=None)
 
 @app.route("/motivos/nuevo", methods=["POST"])
+@require_admin
 def motivo_nuevo():
     nombre = request.form.get("nombre", "").strip()
     duracion = request.form.get("duracion", "0").strip()
@@ -1574,6 +1580,7 @@ def motivo_nuevo():
     return redirect(url_for("motivos"))
 
 @app.route("/motivos/editar/<int:id>", methods=["GET", "POST"])
+@require_admin
 def motivo_editar(id):
     conn = get_db()
     if request.method == "POST":
@@ -1607,6 +1614,7 @@ def motivo_editar(id):
     return render_template("motivos.html", motivos=[], motivo_edit=motivo)
 
 @app.route("/motivos/eliminar/<int:id>")
+@require_admin
 def motivo_eliminar(id):
     conn = get_db()
     conn.execute("DELETE FROM motivos WHERE id=? AND empresa_id=?", (id, current_empresa_id()))
@@ -2302,6 +2310,7 @@ def particulares_cliente(cliente_id):
 
 # ---------- FERIADOS ----------
 @app.route("/feriados", methods=["GET", "POST"])
+@require_admin
 def feriados():
     conn = get_db()
     cur = conn.cursor()
@@ -2348,6 +2357,7 @@ def feriados():
     return render_template("feriados.html", feriados=items)
 
 @app.route("/feriados/eliminar/<int:id>", methods=["POST"])
+@require_admin
 def feriado_eliminar(id):
     conn = get_db()
     cur = conn.cursor()
@@ -2359,6 +2369,7 @@ def feriado_eliminar(id):
 
 # ---------- ADMIN ----------
 @app.route("/admin/recalcular_deudores")
+@require_admin
 def admin_recalcular_deudores():
     conn = get_db()
     ids = [r['id'] for r in conn.execute("SELECT id FROM clientes WHERE empresa_id=?", (current_empresa_id(),)).fetchall()]
