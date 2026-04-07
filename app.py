@@ -902,6 +902,7 @@ def administrador_panel():
 
 
 @app.route('/administrador/veterinaria/<int:empresa_id>')
+@app.route('/administrador/veterinaria/<int:empresa_id>/')
 @require_master_admin
 def administrador_veterinaria(empresa_id):
     conn = get_db()
@@ -954,12 +955,15 @@ def administrador_veterinaria_editar(empresa_id):
 
 
 @app.route('/administrador/veterinaria/<int:empresa_id>/usuarios/nuevo', methods=['POST'])
+@app.route('/administrador/veterinaria/<int:empresa_id>/usuarios/crear', methods=['POST'])
 @require_master_admin
 def administrador_usuario_nuevo(empresa_id):
     nombre = (request.form.get('nombre') or '').strip()
     email = (request.form.get('email') or '').strip().lower()
     rol = (request.form.get('rol') or 'usuario').strip().lower()
     password = request.form.get('password') or ''
+    if rol == 'operador':
+        rol = 'usuario'
     if rol not in ('admin', 'usuario'):
         rol = 'usuario'
     if not nombre or not email or len(password) < 6:
