@@ -39,6 +39,76 @@ def _ensure_column(cur, table, colname, coldef):
     if colname not in cols:
         cur.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
 
+def _migrate_reminder_config_if_needed(conn):
+    cur = conn.cursor()
+    row = cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='reminder_config'").fetchone()
+    if not row or not row[0]:
+        return
+    create_sql = (row[0] or '').lower()
+    # Esquema viejo: tabla de una sola clínica con id CHECK(id=1).
+    # En multiempresa necesitamos una fila por empresa y empresa_id como clave.
+    if 'check(id=1)' not in create_sql and 'empresa_id integer primary key' in create_sql:
+        return
+
+    try:
+        rows = cur.execute("SELECT * FROM reminder_config").fetchall()
+    except Exception:
+        rows = []
+
+    cur.execute("ALTER TABLE reminder_config RENAME TO reminder_config_old")
+    cur.execute("""
+    CREATE TABLE reminder_config (
+        empresa_id INTEGER PRIMARY KEY,
+        mensual_enabled INTEGER DEFAULT 1,
+        mensual_template TEXT,
+        mensual_hora TEXT DEFAULT '10:00',
+        mensual_dia_mes INTEGER DEFAULT 1,
+        vacunas_enabled INTEGER DEFAULT 1,
+        vacunas_template TEXT,
+        vacunas_hora TEXT DEFAULT '10:00',
+        vacunas_dias_antes INTEGER DEFAULT 7,
+        despa_enabled INTEGER DEFAULT 0,
+        despa_template TEXT,
+        despa_hora TEXT DEFAULT '10:00',
+        despa_dias_antes INTEGER DEFAULT 7,
+        despa_intervalo_dias INTEGER DEFAULT 90,
+        part_enabled INTEGER DEFAULT 1,
+        part_template TEXT,
+        part_hora TEXT DEFAULT '10:00',
+        part_dia_mes INTEGER DEFAULT 5,
+        smtp_host TEXT,
+        smtp_port INTEGER DEFAULT 587,
+        smtp_user TEXT,
+        smtp_pass TEXT,
+        smtp_tls INTEGER DEFAULT 1,
+        smtp_ssl INTEGER DEFAULT 0,
+        smtp_from TEXT,
+        smtp_from_name TEXT
+    )""")
+
+    old_cols = [r[1] for r in cur.execute("PRAGMA table_info(reminder_config_old)").fetchall()]
+    for r in rows:
+        data = dict(zip(old_cols, r)) if not isinstance(r, dict) else r
+        empresa_id = data.get('empresa_id') or 1
+        cur.execute("""
+            INSERT OR REPLACE INTO reminder_config (
+                empresa_id, mensual_enabled, mensual_template, mensual_hora, mensual_dia_mes,
+                vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
+                despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
+                part_enabled, part_template, part_hora, part_dia_mes,
+                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            empresa_id,
+            data.get('mensual_enabled', 1), data.get('mensual_template'), data.get('mensual_hora', '10:00'), data.get('mensual_dia_mes', 1),
+            data.get('vacunas_enabled', 1), data.get('vacunas_template'), data.get('vacunas_hora', '10:00'), data.get('vacunas_dias_antes', 7),
+            data.get('despa_enabled', 0), data.get('despa_template'), data.get('despa_hora', '10:00'), data.get('despa_dias_antes', 7), data.get('despa_intervalo_dias', 90),
+            data.get('part_enabled', 1), data.get('part_template'), data.get('part_hora', '10:00'), data.get('part_dia_mes', 5),
+            data.get('smtp_host'), data.get('smtp_port', 587), data.get('smtp_user'), data.get('smtp_pass'), data.get('smtp_tls', 1), data.get('smtp_ssl', 0), data.get('smtp_from'), data.get('smtp_from_name')
+        ))
+    cur.execute("DROP TABLE IF EXISTS reminder_config_old")
+
+
 def init_tables():
     conn = db_conn(); cur = conn.cursor()
 
@@ -71,6 +141,9 @@ def init_tables():
         smtp_from TEXT,
         smtp_from_name TEXT
     )""")
+
+    _migrate_reminder_config_if_needed(conn)
+    cur = conn.cursor()
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS reminder_queue (
@@ -530,7 +603,9 @@ def config():
         (f.get('smtp_from_name') or '').strip(),
         emp
     )
-    conn = db_conn(); conn.execute("""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("""
         UPDATE reminder_config SET
             mensual_enabled=?, mensual_template=?, mensual_hora=?, mensual_dia_mes=?,
             vacunas_enabled=?, vacunas_template=?, vacunas_hora=?, vacunas_dias_antes=?,
@@ -539,6 +614,43 @@ def config():
             smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?
         WHERE empresa_id=?
     """, values)
+    if cur.rowcount == 0:
+        cur.execute("""
+            INSERT INTO reminder_config (
+                empresa_id, mensual_enabled, mensual_template, mensual_hora, mensual_dia_mes,
+                vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
+                despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
+                part_enabled, part_template, part_hora, part_dia_mes,
+                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            emp,
+            1 if f.get('mensual_enabled') else 0,
+            (f.get('mensual_template') or '').strip(),
+            (f.get('mensual_hora') or '10:00').strip(),
+            int(f.get('mensual_dia_mes') or 1),
+            1 if f.get('vacunas_enabled') else 0,
+            (f.get('vacunas_template') or '').strip(),
+            (f.get('vacunas_hora') or '10:00').strip(),
+            int(f.get('vacunas_dias_antes') or 7),
+            1 if f.get('despa_enabled') else 0,
+            (f.get('despa_template') or '').strip(),
+            (f.get('despa_hora') or '10:00').strip(),
+            int(f.get('despa_dias_antes') or 7),
+            int(f.get('despa_intervalo_dias') or 90),
+            1 if f.get('part_enabled') else 0,
+            (f.get('part_template') or '').strip(),
+            (f.get('part_hora') or '10:00').strip(),
+            int(f.get('part_dia_mes') or 5),
+            (f.get('smtp_host') or '').strip(),
+            int(f.get('smtp_port') or 587),
+            (f.get('smtp_user') or '').strip(),
+            (f.get('smtp_pass') or '').strip(),
+            1 if f.get('smtp_tls') else 0,
+            1 if f.get('smtp_ssl') else 0,
+            (f.get('smtp_from') or '').strip(),
+            (f.get('smtp_from_name') or '').strip(),
+        ))
     conn.commit(); conn.close()
     flash('Configuración guardada.', 'success')
     return redirect(url_for('recordatorios.dashboard'))
