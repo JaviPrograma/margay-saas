@@ -105,7 +105,7 @@ def _migrate_reminder_config_if_needed(conn):
             data.get('vacunas_enabled', 1), data.get('vacunas_template'), data.get('vacunas_hora', '10:00'), data.get('vacunas_dias_antes', 7),
             data.get('despa_enabled', 0), data.get('despa_template'), data.get('despa_hora', '10:00'), data.get('despa_dias_antes', 7), data.get('despa_intervalo_dias', 90),
             data.get('part_enabled', 1), data.get('part_template'), data.get('part_hora', '10:00'), data.get('part_dia_mes', 5),
-            data.get('smtp_host'), data.get('smtp_port', 587), data.get('smtp_user'), data.get('smtp_pass'), data.get('smtp_tls', 1), data.get('smtp_ssl', 0), data.get('smtp_from'), data.get('smtp_from_name')
+            data.get('smtp_host'), data.get('smtp_port', 587), data.get('smtp_user'), data.get('smtp_pass'), data.get('smtp_tls', 1), data.get('smtp_ssl', 0), data.get('smtp_from'), data.get('smtp_from_name'), data.get('test_email')
         ))
     cur.execute("DROP TABLE IF EXISTS reminder_config_old")
 
@@ -578,85 +578,81 @@ def config():
         return redirect(url_for('login'))
     ensure_empresa_config(emp)
     f = request.form
-    values = (
-        1 if f.get('mensual_enabled') else 0,
-        (f.get('mensual_template') or '').strip(),
-        (f.get('mensual_hora') or '10:00').strip(),
-        int(f.get('mensual_dia_mes') or 1),
-        1 if f.get('vacunas_enabled') else 0,
-        (f.get('vacunas_template') or '').strip(),
-        (f.get('vacunas_hora') or '10:00').strip(),
-        int(f.get('vacunas_dias_antes') or 7),
-        1 if f.get('despa_enabled') else 0,
-        (f.get('despa_template') or '').strip(),
-        (f.get('despa_hora') or '10:00').strip(),
-        int(f.get('despa_dias_antes') or 7),
-        int(f.get('despa_intervalo_dias') or 90),
-        1 if f.get('part_enabled') else 0,
-        (f.get('part_template') or '').strip(),
-        (f.get('part_hora') or '10:00').strip(),
-        int(f.get('part_dia_mes') or 5),
-        (f.get('smtp_host') or '').strip(),
-        int(f.get('smtp_port') or 587),
-        (f.get('smtp_user') or '').strip(),
-        (f.get('smtp_pass') or '').strip(),
-        1 if f.get('smtp_tls') else 0,
-        1 if f.get('smtp_ssl') else 0,
-        (f.get('smtp_from') or '').strip(),
-        (f.get('smtp_from_name') or '').strip(),
-        (f.get('test_email') or '').strip(),
-        emp
-    )
+    payload = {
+        'empresa_id': emp,
+        'mensual_enabled': 1 if f.get('mensual_enabled') else 0,
+        'mensual_template': (f.get('mensual_template') or '').strip(),
+        'mensual_hora': (f.get('mensual_hora') or '10:00').strip(),
+        'mensual_dia_mes': int(f.get('mensual_dia_mes') or 1),
+        'vacunas_enabled': 1 if f.get('vacunas_enabled') else 0,
+        'vacunas_template': (f.get('vacunas_template') or '').strip(),
+        'vacunas_hora': (f.get('vacunas_hora') or '10:00').strip(),
+        'vacunas_dias_antes': int(f.get('vacunas_dias_antes') or 7),
+        'despa_enabled': 1 if f.get('despa_enabled') else 0,
+        'despa_template': (f.get('despa_template') or '').strip(),
+        'despa_hora': (f.get('despa_hora') or '10:00').strip(),
+        'despa_dias_antes': int(f.get('despa_dias_antes') or 7),
+        'despa_intervalo_dias': int(f.get('despa_intervalo_dias') or 90),
+        'part_enabled': 1 if f.get('part_enabled') else 0,
+        'part_template': (f.get('part_template') or '').strip(),
+        'part_hora': (f.get('part_hora') or '10:00').strip(),
+        'part_dia_mes': int(f.get('part_dia_mes') or 5),
+        'smtp_host': (f.get('smtp_host') or '').strip(),
+        'smtp_port': int(f.get('smtp_port') or 587),
+        'smtp_user': (f.get('smtp_user') or '').strip(),
+        'smtp_pass': (f.get('smtp_pass') or '').strip(),
+        'smtp_tls': 1 if f.get('smtp_tls') else 0,
+        'smtp_ssl': 1 if f.get('smtp_ssl') else 0,
+        'smtp_from': (f.get('smtp_from') or '').strip(),
+        'smtp_from_name': (f.get('smtp_from_name') or '').strip(),
+        'test_email': (f.get('test_email') or '').strip(),
+    }
     conn = db_conn()
     cur = conn.cursor()
     cur.execute("""
-        UPDATE reminder_config SET
-            mensual_enabled=?, mensual_template=?, mensual_hora=?, mensual_dia_mes=?,
-            vacunas_enabled=?, vacunas_template=?, vacunas_hora=?, vacunas_dias_antes=?,
-            despa_enabled=?, despa_template=?, despa_hora=?, despa_dias_antes=?, despa_intervalo_dias=?,
-            part_enabled=?, part_template=?, part_hora=?, part_dia_mes=?,
-            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?, test_email=?
-        WHERE empresa_id=?
-    """, values)
-    if cur.rowcount == 0:
-        cur.execute("""
-            INSERT INTO reminder_config (
-                empresa_id, mensual_enabled, mensual_template, mensual_hora, mensual_dia_mes,
-                vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
-                despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
-                part_enabled, part_template, part_hora, part_dia_mes,
-                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            emp,
-            1 if f.get('mensual_enabled') else 0,
-            (f.get('mensual_template') or '').strip(),
-            (f.get('mensual_hora') or '10:00').strip(),
-            int(f.get('mensual_dia_mes') or 1),
-            1 if f.get('vacunas_enabled') else 0,
-            (f.get('vacunas_template') or '').strip(),
-            (f.get('vacunas_hora') or '10:00').strip(),
-            int(f.get('vacunas_dias_antes') or 7),
-            1 if f.get('despa_enabled') else 0,
-            (f.get('despa_template') or '').strip(),
-            (f.get('despa_hora') or '10:00').strip(),
-            int(f.get('despa_dias_antes') or 7),
-            int(f.get('despa_intervalo_dias') or 90),
-            1 if f.get('part_enabled') else 0,
-            (f.get('part_template') or '').strip(),
-            (f.get('part_hora') or '10:00').strip(),
-            int(f.get('part_dia_mes') or 5),
-            (f.get('smtp_host') or '').strip(),
-            int(f.get('smtp_port') or 587),
-            (f.get('smtp_user') or '').strip(),
-            (f.get('smtp_pass') or '').strip(),
-            1 if f.get('smtp_tls') else 0,
-            1 if f.get('smtp_ssl') else 0,
-            (f.get('smtp_from') or '').strip(),
-            (f.get('smtp_from_name') or '').strip(),
-            (f.get('test_email') or '').strip(),
-        ))
-    conn.commit(); conn.close()
+        INSERT INTO reminder_config (
+            empresa_id, mensual_enabled, mensual_template, mensual_hora, mensual_dia_mes,
+            vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
+            despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
+            part_enabled, part_template, part_hora, part_dia_mes,
+            smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
+        ) VALUES (
+            :empresa_id, :mensual_enabled, :mensual_template, :mensual_hora, :mensual_dia_mes,
+            :vacunas_enabled, :vacunas_template, :vacunas_hora, :vacunas_dias_antes,
+            :despa_enabled, :despa_template, :despa_hora, :despa_dias_antes, :despa_intervalo_dias,
+            :part_enabled, :part_template, :part_hora, :part_dia_mes,
+            :smtp_host, :smtp_port, :smtp_user, :smtp_pass, :smtp_tls, :smtp_ssl, :smtp_from, :smtp_from_name, :test_email
+        )
+        ON CONFLICT(empresa_id) DO UPDATE SET
+            mensual_enabled=excluded.mensual_enabled,
+            mensual_template=excluded.mensual_template,
+            mensual_hora=excluded.mensual_hora,
+            mensual_dia_mes=excluded.mensual_dia_mes,
+            vacunas_enabled=excluded.vacunas_enabled,
+            vacunas_template=excluded.vacunas_template,
+            vacunas_hora=excluded.vacunas_hora,
+            vacunas_dias_antes=excluded.vacunas_dias_antes,
+            despa_enabled=excluded.despa_enabled,
+            despa_template=excluded.despa_template,
+            despa_hora=excluded.despa_hora,
+            despa_dias_antes=excluded.despa_dias_antes,
+            despa_intervalo_dias=excluded.despa_intervalo_dias,
+            part_enabled=excluded.part_enabled,
+            part_template=excluded.part_template,
+            part_hora=excluded.part_hora,
+            part_dia_mes=excluded.part_dia_mes,
+            smtp_host=excluded.smtp_host,
+            smtp_port=excluded.smtp_port,
+            smtp_user=excluded.smtp_user,
+            smtp_pass=excluded.smtp_pass,
+            smtp_tls=excluded.smtp_tls,
+            smtp_ssl=excluded.smtp_ssl,
+            smtp_from=excluded.smtp_from,
+            smtp_from_name=excluded.smtp_from_name,
+            test_email=excluded.test_email
+    """, payload)
+    conn.commit()
+    conn.close()
     flash('Configuración guardada.', 'success')
     return redirect(url_for('recordatorios.dashboard'))
 
@@ -677,6 +673,7 @@ def smtp_test():
         return redirect(url_for('login'))
     f = request.form
     cfg = {
+        'empresa_id': emp,
         'smtp_host': (f.get('smtp_host') or '').strip(),
         'smtp_port': int(f.get('smtp_port') or 587),
         'smtp_user': (f.get('smtp_user') or '').strip(),
@@ -685,11 +682,37 @@ def smtp_test():
         'smtp_ssl': 1 if f.get('smtp_ssl') else 0,
         'smtp_from': (f.get('smtp_from') or '').strip(),
         'smtp_from_name': (f.get('smtp_from_name') or '').strip(),
+        'test_email': (f.get('test_email') or '').strip(),
     }
-    test_email = (f.get('test_email') or '').strip() or cfg['smtp_from']
+    test_email = cfg['test_email'] or cfg['smtp_from'] or cfg['smtp_user']
     if not test_email:
         flash('Ingresá un email de prueba o un remitente válido.', 'danger')
         return redirect(url_for('recordatorios.dashboard'))
+
+    conn = db_conn()
+    conn.execute("""
+        INSERT INTO reminder_config (empresa_id, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email)
+        VALUES (:empresa_id, :smtp_host, :smtp_port, :smtp_user, :smtp_pass, :smtp_tls, :smtp_ssl, :smtp_from, :smtp_from_name, :test_email)
+        ON CONFLICT(empresa_id) DO UPDATE SET
+            smtp_host=excluded.smtp_host,
+            smtp_port=excluded.smtp_port,
+            smtp_user=excluded.smtp_user,
+            smtp_pass=excluded.smtp_pass,
+            smtp_tls=excluded.smtp_tls,
+            smtp_ssl=excluded.smtp_ssl,
+            smtp_from=excluded.smtp_from,
+            smtp_from_name=excluded.smtp_from_name,
+            test_email=excluded.test_email
+    """, {**cfg, 'test_email': test_email})
+    conn.commit()
+    conn.close()
+
+    try:
+        _smtp_send(cfg, test_email, 'Prueba SMTP VetCloud', 'Esta es una prueba de configuración SMTP desde VetCloud.')
+        flash(f'Prueba SMTP exitosa. Se envió un correo a {test_email}.', 'success')
+    except Exception as e:
+        flash(f'Error SMTP: {e}', 'danger')
+    return redirect(url_for('recordatorios.dashboard'))
 
     try:
         conn = db_conn()
