@@ -359,7 +359,8 @@ def init_db():
     for alter in [
         "ALTER TABLE motivos ADD COLUMN precio_mensual REAL",
         "ALTER TABLE motivos ADD COLUMN precio_particular REAL",
-        "ALTER TABLE motivos ADD COLUMN tipo TEXT DEFAULT 'consulta'"
+        "ALTER TABLE motivos ADD COLUMN tipo TEXT DEFAULT 'consulta'",
+        "ALTER TABLE motivos ADD COLUMN genera_historia INTEGER DEFAULT 1"
     ]:
         try: cur.execute(alter)
         except Exception: pass
@@ -1561,6 +1562,7 @@ def motivo_nuevo():
     precio_mensual = request.form.get("precio_mensual", "").strip()
     precio_particular = request.form.get("precio_particular", "").strip()
     tipo = request.form.get("tipo", "consulta").strip()
+    genera_historia = 1 if request.form.get("genera_historia") == "1" else 0
 
     if not duracion.isdigit():
         flash("Duración inválida", "danger")
@@ -1572,8 +1574,8 @@ def motivo_nuevo():
 
     conn = get_db()
     conn.execute(
-        "INSERT INTO motivos (nombre, duracion_minutos, precio_mensual, precio_particular, tipo, empresa_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (nombre, duracion, pm, pp, tipo, current_empresa_id()),
+        "INSERT INTO motivos (nombre, duracion_minutos, precio_mensual, precio_particular, tipo, genera_historia, empresa_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (nombre, duracion, pm, pp, tipo, genera_historia, current_empresa_id()),
     )
     conn.commit()
     conn.close()
@@ -1589,6 +1591,7 @@ def motivo_editar(id):
         precio_mensual = request.form.get("precio_mensual", "").strip()
         precio_particular = request.form.get("precio_particular", "").strip()
         tipo = request.form.get("tipo", "consulta").strip()
+        genera_historia = 1 if request.form.get("genera_historia") == "1" else 0
 
         if not duracion.isdigit():
             conn.close()
@@ -1836,7 +1839,7 @@ def atender_cita(cita_id):
                c.nombre  AS cliente_nombre, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion,
                an.nombre AS animal_nombre, an.cliente_id AS cid,
                d.nombre  AS doctor_nombre,
-               m.nombre  AS motivo_nombre, m.tipo AS motivo_tipo
+               m.nombre  AS motivo_nombre, m.tipo AS motivo_tipo, m.genera_historia AS motivo_genera_historia
           FROM agenda a
           JOIN clientes c ON c.id = a.cliente_id
           JOIN animales an ON an.id = a.animal_id
@@ -1848,6 +1851,18 @@ def atender_cita(cita_id):
     if not cita:
         conn.close()
         flash("Cita no encontrada.", "danger")
+        return redirect(url_for("agenda_lista"))
+
+    motivo_nombre_norm = ((cita["motivo_nombre"] or "").strip()).lower()
+    genera_historia = int(cita["motivo_genera_historia"] if cita["motivo_genera_historia"] is not None else 1)
+    if "peluquer" in motivo_nombre_norm:
+        genera_historia = 0
+
+    if request.method == "GET" and not genera_historia:
+        cur.execute("UPDATE agenda SET atendida=1 WHERE id=?", (cita_id,))
+        conn.commit()
+        conn.close()
+        flash("La cita fue marcada como atendida. Este motivo no genera historia clínica.", "success")
         return redirect(url_for("agenda_lista"))
 
     if request.method == "POST":
