@@ -1949,9 +1949,8 @@ def whatsapp_web_cita(cita_id):
         return redirect(url_for(CLINIC_WHATSAPP_RETURN))
 
     text = build_whatsapp_text(cita, cli, ani, doc, mot)
-    # Usar WhatsApp Web en la MISMA pestaña (reutiliza la sesión abierta)
-    wa_url = f"https://web.whatsapp.com/send?phone={phone_digits}&text={quote(text)}"
-    return redirect(wa_url)
+    # Abrir WhatsApp en una pestaña nueva y mantener el sistema abierto.
+    return render_template("whatsapp.auto.html", phone=phone_digits, text=text)
 @app.route('/mensualidades', methods=['GET'])
 def mensualidades():
     hoy = datetime.now()
