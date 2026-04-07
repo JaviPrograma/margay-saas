@@ -388,35 +388,34 @@ def _gen_despa_auto(conn, empresa_id, today, cfg):
     if not int(cfg['despa_enabled'] or 0):
         return
     dias = int(cfg['despa_dias_antes'] or 7)
-    intervalo = int(cfg['despa_intervalo_dias'] or 90)
     objetivo = today + dt.timedelta(days=dias)
     programado = _dt_on(today, cfg['despa_hora'] or '10:00').strftime('%Y-%m-%d %H:%M')
     clinica = _empresa_nombre(conn, empresa_id)
     filas = conn.execute("""
-        SELECT a.id AS animal_id, a.nombre AS animal_nombre, a.ultima_desparasitacion,
+        SELECT d.id AS despa_id, d.fecha_vencimiento,
+               a.id AS animal_id, a.nombre AS animal_nombre,
                c.id AS cliente_id, c.nombre AS cliente_nombre, c.email
-        FROM animales a
+        FROM desparasitaciones d
+        JOIN animales a ON a.id=d.animal_id
         JOIN clientes c ON c.id=a.cliente_id
-        WHERE a.empresa_id=? AND c.empresa_id=? AND COALESCE(a.ultima_desparasitacion,'')<>'' AND COALESCE(c.email,'')<>''
-        ORDER BY c.nombre, a.nombre
-    """, (empresa_id, empresa_id)).fetchall()
-    tpl = cfg['despa_template'] or "Hola {CLIENTE}, estas desparasitaciones están próximas a vencer:\n\n{LISTADO}"
+        WHERE d.empresa_id=? AND a.empresa_id=? AND c.empresa_id=?
+          AND DATE(d.fecha_vencimiento)=DATE(?)
+          AND COALESCE(c.email,'')<>''
+        ORDER BY c.nombre, a.nombre, d.id DESC
+    """, (empresa_id, empresa_id, empresa_id, objetivo.strftime('%Y-%m-%d'))).fetchall()
+    tpl = cfg['despa_template'] or "Hola {CLIENTE}, estas desparasitaciones están próximas a vencer:
+
+{LISTADO}"
     for r in filas:
-        try:
-            ultima = dt.datetime.strptime(r['ultima_desparasitacion'][:10], '%Y-%m-%d').date()
-        except Exception:
-            continue
-        vence = ultima + dt.timedelta(days=intervalo)
-        if vence != objetivo:
-            continue
-        referencia = vence.strftime('%Y-%m-%d')
+        referencia = r['fecha_vencimiento']
         asunto = f"{clinica} - Desparasitación próxima a vencer"
-        listado = f"- {r['animal_nombre']}: vence {referencia}"
+        fecha_vto = r['fecha_vencimiento']
+        listado = f"- {r['animal_nombre']}: vence {fecha_vto}"
         msg = _render_placeholders(
             tpl,
             cliente=r['cliente_nombre'],
             animal=r['animal_nombre'],
-            fecha=referencia,
+            fecha=fecha_vto,
             listado=listado,
             empresa=clinica,
             tipo='desparasitación',
