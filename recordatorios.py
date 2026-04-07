@@ -83,7 +83,8 @@ def _migrate_reminder_config_if_needed(conn):
         smtp_tls INTEGER DEFAULT 1,
         smtp_ssl INTEGER DEFAULT 0,
         smtp_from TEXT,
-        smtp_from_name TEXT
+        smtp_from_name TEXT,
+        test_email TEXT
     )""")
 
     old_cols = [r[1] for r in cur.execute("PRAGMA table_info(reminder_config_old)").fetchall()]
@@ -139,7 +140,8 @@ def init_tables():
         smtp_tls INTEGER DEFAULT 1,
         smtp_ssl INTEGER DEFAULT 0,
         smtp_from TEXT,
-        smtp_from_name TEXT
+        smtp_from_name TEXT,
+        test_email TEXT
     )""")
 
     _migrate_reminder_config_if_needed(conn)
@@ -192,6 +194,7 @@ def init_tables():
     _ensure_column(cur, 'reminder_config', 'smtp_ssl', "smtp_ssl INTEGER DEFAULT 0")
     _ensure_column(cur, 'reminder_config', 'smtp_from', "smtp_from TEXT")
     _ensure_column(cur, 'reminder_config', 'smtp_from_name', "smtp_from_name TEXT")
+    _ensure_column(cur, 'reminder_config', 'test_email', "test_email TEXT")
 
     _ensure_column(cur, 'reminder_queue', 'empresa_id', "empresa_id INTEGER NOT NULL DEFAULT 1")
     _ensure_column(cur, 'reminder_queue', 'tipo', "tipo TEXT")
@@ -601,6 +604,7 @@ def config():
         1 if f.get('smtp_ssl') else 0,
         (f.get('smtp_from') or '').strip(),
         (f.get('smtp_from_name') or '').strip(),
+        (f.get('test_email') or '').strip(),
         emp
     )
     conn = db_conn()
@@ -685,6 +689,15 @@ def smtp_test():
     if not test_email:
         flash('Ingresá un email de prueba o un remitente válido.', 'danger')
         return redirect(url_for('recordatorios.dashboard'))
+
+    try:
+        conn = db_conn()
+        conn.execute("UPDATE reminder_config SET test_email=? WHERE empresa_id=?", (test_email, emp))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
     try:
         _smtp_send(cfg, test_email, 'Prueba SMTP VetCloud', 'Esta es una prueba de configuración SMTP desde VetCloud.')
         flash(f'Prueba SMTP exitosa. Se envió un correo a {test_email}.', 'success')
