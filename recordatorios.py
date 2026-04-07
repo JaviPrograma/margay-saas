@@ -97,15 +97,15 @@ def _migrate_reminder_config_if_needed(conn):
                 vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
                 despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
                 part_enabled, part_template, part_hora, part_dia_mes,
-                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             empresa_id,
             data.get('mensual_enabled', 1), data.get('mensual_template'), data.get('mensual_hora', '10:00'), data.get('mensual_dia_mes', 1),
             data.get('vacunas_enabled', 1), data.get('vacunas_template'), data.get('vacunas_hora', '10:00'), data.get('vacunas_dias_antes', 7),
             data.get('despa_enabled', 0), data.get('despa_template'), data.get('despa_hora', '10:00'), data.get('despa_dias_antes', 7), data.get('despa_intervalo_dias', 90),
             data.get('part_enabled', 1), data.get('part_template'), data.get('part_hora', '10:00'), data.get('part_dia_mes', 5),
-            data.get('smtp_host'), data.get('smtp_port', 587), data.get('smtp_user'), data.get('smtp_pass'), data.get('smtp_tls', 1), data.get('smtp_ssl', 0), data.get('smtp_from'), data.get('smtp_from_name'), data.get('test_email')
+            data.get('smtp_host'), data.get('smtp_port', 587), data.get('smtp_user'), data.get('smtp_pass'), data.get('smtp_tls', 1), data.get('smtp_ssl', 0), data.get('smtp_from'), data.get('smtp_from_name')
         ))
     cur.execute("DROP TABLE IF EXISTS reminder_config_old")
 
@@ -615,7 +615,7 @@ def config():
             vacunas_enabled=?, vacunas_template=?, vacunas_hora=?, vacunas_dias_antes=?,
             despa_enabled=?, despa_template=?, despa_hora=?, despa_dias_antes=?, despa_intervalo_dias=?,
             part_enabled=?, part_template=?, part_hora=?, part_dia_mes=?,
-            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?, test_email=?
+            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?
         WHERE empresa_id=?
     """, values)
     if cur.rowcount == 0:
@@ -625,8 +625,8 @@ def config():
                 vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
                 despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
                 part_enabled, part_template, part_hora, part_dia_mes,
-                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             emp,
             1 if f.get('mensual_enabled') else 0,
@@ -654,7 +654,6 @@ def config():
             1 if f.get('smtp_ssl') else 0,
             (f.get('smtp_from') or '').strip(),
             (f.get('smtp_from_name') or '').strip(),
-            (f.get('test_email') or '').strip(),
         ))
     conn.commit(); conn.close()
     flash('Configuración guardada.', 'success')
