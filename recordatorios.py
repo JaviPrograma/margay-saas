@@ -97,8 +97,8 @@ def _migrate_reminder_config_if_needed(conn):
                 vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
                 despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
                 part_enabled, part_template, part_hora, part_dia_mes,
-                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             empresa_id,
             data.get('mensual_enabled', 1), data.get('mensual_template'), data.get('mensual_hora', '10:00'), data.get('mensual_dia_mes', 1),
@@ -615,7 +615,7 @@ def config():
             vacunas_enabled=?, vacunas_template=?, vacunas_hora=?, vacunas_dias_antes=?,
             despa_enabled=?, despa_template=?, despa_hora=?, despa_dias_antes=?, despa_intervalo_dias=?,
             part_enabled=?, part_template=?, part_hora=?, part_dia_mes=?,
-            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?
+            smtp_host=?, smtp_port=?, smtp_user=?, smtp_pass=?, smtp_tls=?, smtp_ssl=?, smtp_from=?, smtp_from_name=?, test_email=?
         WHERE empresa_id=?
     """, values)
     if cur.rowcount == 0:
@@ -625,8 +625,8 @@ def config():
                 vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
                 despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
                 part_enabled, part_template, part_hora, part_dia_mes,
-                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             emp,
             1 if f.get('mensual_enabled') else 0,
@@ -654,6 +654,7 @@ def config():
             1 if f.get('smtp_ssl') else 0,
             (f.get('smtp_from') or '').strip(),
             (f.get('smtp_from_name') or '').strip(),
+            (f.get('test_email') or '').strip(),
         ))
     conn.commit(); conn.close()
     flash('Configuración guardada.', 'success')
