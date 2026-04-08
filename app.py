@@ -1966,182 +1966,252 @@ def whatsapp_web_cita(cita_id):
     text = build_whatsapp_text(cita, cli, ani, doc, mot)
     # Abrir WhatsApp en una pestaña nueva y mantener el sistema abierto.
     return render_template("whatsapp.auto.html", phone=phone_digits, text=text)
+def _normalizar_mensualidades_empresa(conn, empresa_id=None):
+    empresa_id = empresa_id or current_empresa_id()
+    if not empresa_id:
+        return
+    conn.execute(
+        """
+        UPDATE mensualidades
+           SET empresa_id = ?
+         WHERE cliente_id IN (SELECT id FROM clientes WHERE empresa_id = ?)
+           AND COALESCE(empresa_id, 0) <> ?
+        """,
+        (empresa_id, empresa_id, empresa_id),
+    )
+
+
 @app.route('/mensualidades', methods=['GET'])
 def mensualidades():
     hoy = datetime.now()
     anio = int(request.values.get('anio', hoy.year))
     mes = int(request.values.get('mes', hoy.month))
+    empresa_id = current_empresa_id()
 
     conn = get_db()
     cur = conn.cursor()
 
-    mensuales = cur.execute("SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND activo=1 AND empresa_id=?", (current_empresa_id(),)).fetchall()
-    for c in mensuales:
-        cuota = c['cuota_mensual'] is not None and c['cuota_mensual'] or _calc_cuota_automatica(conn, c['id'])
-        cur.execute("""
-            INSERT OR IGNORE INTO mensualidades (cliente_id, anio, mes, pagado, monto_cuota, monto_pagado)
-            VALUES (?, ?, ?, 0, ?, 0)
-        """, (c['id'], anio, mes, cuota))
+    _normalizar_mensualidades_empresa(conn, empresa_id)
+
+    mensuales = cur.execute(
+        "SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND activo=1 AND empresa_id=?",
+        (empresa_id,),
+    ).fetchall()
 
     for c in mensuales:
-        cuota = c['cuota_mensual'] is not None and c['cuota_mensual'] or _calc_cuota_automatica(conn, c['id'])
-        cur.execute("""
-            UPDATE mensualidades SET monto_cuota=?
-            WHERE cliente_id=? AND anio=? AND mes=? AND (monto_cuota IS NULL OR monto_cuota=0)
-        """, (cuota, c['id'], anio, mes))
+        cuota = c['cuota_mensual'] if c['cuota_mensual'] is not None else _calc_cuota_automatica(conn, c['id'])
+        cur.execute(
+            """
+            INSERT OR IGNORE INTO mensualidades (cliente_id, anio, mes, pagado, monto_cuota, monto_pagado, empresa_id)
+            VALUES (?, ?, ?, 0, ?, 0, ?)
+            """,
+            (c['id'], anio, mes, cuota, empresa_id),
+        )
+        cur.execute(
+            """
+            UPDATE mensualidades
+               SET monto_cuota = CASE WHEN monto_cuota IS NULL OR monto_cuota = 0 THEN ? ELSE monto_cuota END,
+                   empresa_id = ?
+             WHERE cliente_id = ? AND anio = ? AND mes = ?
+            """,
+            (cuota, empresa_id, c['id'], anio, mes),
+        )
 
     conn.commit()
 
-    filas = cur.execute("""
-        SELECT me.id as mensualidad_id, me.cliente_id, me.anio, me.mes, me.pagado, me.fecha_pago,
+    filas = cur.execute(
+        """
+        SELECT me.id AS mensualidad_id, me.cliente_id, me.anio, me.mes, me.pagado, me.fecha_pago,
                me.monto_cuota, me.monto_pagado,
                cl.nombre, cl.cedula, cl.telefono, cl.deudor, cl.activo
-        FROM mensualidades me
-        JOIN clientes cl ON cl.id = me.cliente_id
-        WHERE me.anio=? AND me.mes=?
-        ORDER BY cl.nombre COLLATE NOCASE
-    """, (anio, mes)).fetchall()
+          FROM mensualidades me
+          JOIN clientes cl ON cl.id = me.cliente_id AND cl.empresa_id = me.empresa_id
+         WHERE me.anio = ? AND me.mes = ? AND me.empresa_id = ?
+         ORDER BY cl.nombre COLLATE NOCASE
+        """,
+        (anio, mes, empresa_id),
+    ).fetchall()
 
     registros = []
     for r in filas:
-        extras = cur.execute("SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=?",
-                             (r['mensualidad_id'],)).fetchone()['s']
+        extras = cur.execute(
+            "SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=? AND empresa_id=?",
+            (r['mensualidad_id'], empresa_id),
+        ).fetchone()['s']
         total = (r['monto_cuota'] or 0) + (extras or 0)
         saldo = max(total - (r['monto_pagado'] or 0), 0)
-        registros.append({**dict(r), "extras": extras, "total": total, "saldo": saldo})
+        registros.append({**dict(r), 'extras': extras, 'total': total, 'saldo': saldo})
 
     conn.close()
     return render_template('mensualidades.html', registros=registros, anio=anio, mes=mes)
 
+
 @app.route('/mensualidades/toggle/<int:mensualidad_id>', methods=['POST'])
 def mensualidad_toggle(mensualidad_id):
+    empresa_id = current_empresa_id()
     conn = get_db()
     cur = conn.cursor()
 
     me = cur.execute(
-        "SELECT me.*, cl.cuota_mensual, cl.id AS cid FROM mensualidades me JOIN clientes cl ON cl.id=me.cliente_id WHERE me.id=?",
-        (mensualidad_id,)
+        "SELECT me.*, cl.cuota_mensual, cl.id AS cid FROM mensualidades me JOIN clientes cl ON cl.id=me.cliente_id AND cl.empresa_id=me.empresa_id WHERE me.id=? AND me.empresa_id=?",
+        (mensualidad_id, empresa_id),
     ).fetchone()
     if me is None:
         conn.close()
-        return jsonify({"success": False, "error": "Mensualidad no encontrada"}), 404
+        return jsonify({'success': False, 'error': 'Mensualidad no encontrada'}), 404
 
-    extras = cur.execute("SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=?", (mensualidad_id,)).fetchone()['s']
+    extras = cur.execute(
+        "SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=? AND empresa_id=?",
+        (mensualidad_id, empresa_id),
+    ).fetchone()['s']
     monto_cuota = me['monto_cuota'] if me['monto_cuota'] is not None else me['cuota_mensual']
     total = (monto_cuota or 0) + (extras or 0)
 
     if me['pagado'] == 0:
-        fecha_pago = datetime.now().strftime("%Y-%m-%d %H:%M")
-        cur.execute("UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=? WHERE id=?",
-                    (fecha_pago, total, mensualidad_id))
-        cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=?", (mensualidad_id,))
+        fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
+        cur.execute("UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=? WHERE id=? AND empresa_id=?", (fecha_pago, total, mensualidad_id, empresa_id))
+        cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (mensualidad_id, empresa_id))
     else:
-        cur.execute("UPDATE mensualidades SET pagado=0, fecha_pago=NULL, monto_pagado=0 WHERE id=?",
-                    (mensualidad_id,))
-        cur.execute("""
+        cur.execute("UPDATE mensualidades SET pagado=0, fecha_pago=NULL, monto_pagado=0 WHERE id=? AND empresa_id=?", (mensualidad_id, empresa_id))
+        cur.execute(
+            """
             UPDATE agenda
-            SET estado_pago='Debe'
-            WHERE cobrada_mensualidad_id=? AND COALESCE(precio,0) > 0
-        """, (mensualidad_id,))
+               SET estado_pago='Debe'
+             WHERE cobrada_mensualidad_id=? AND empresa_id=? AND COALESCE(precio,0) > 0
+            """,
+            (mensualidad_id, empresa_id),
+        )
 
     _actualizar_flag_deudor(conn, me['cid'])
     conn.commit()
     conn.close()
-    return jsonify({"success": True, "pagado": (me['pagado'] == 0)})
+    return jsonify({'success': True, 'pagado': (me['pagado'] == 0)})
+
 
 @app.route('/mensualidades/registrar_pago/<int:cliente_id>', methods=['POST'])
 def mensualidades_registrar_pago(cliente_id):
+    empresa_id = current_empresa_id()
     hoy = datetime.now()
     anio, mes = hoy.year, hoy.month
     conn = get_db()
     cur = conn.cursor()
 
-    cl = cur.execute("SELECT cuota_mensual FROM clientes WHERE id=?", (cliente_id,)).fetchone()
+    cl = cur.execute('SELECT cuota_mensual FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
     cuota = cl['cuota_mensual'] if cl and cl['cuota_mensual'] is not None else _calc_cuota_automatica(conn, cliente_id)
-    cur.execute("""
-        INSERT OR IGNORE INTO mensualidades (cliente_id, anio, mes, pagado, monto_cuota, monto_pagado)
-        VALUES (?, ?, ?, 0, ?, 0)
-    """, (cliente_id, anio, mes, cuota))
+    cur.execute(
+        """
+        INSERT OR IGNORE INTO mensualidades (cliente_id, anio, mes, pagado, monto_cuota, monto_pagado, empresa_id)
+        VALUES (?, ?, ?, 0, ?, 0, ?)
+        """,
+        (cliente_id, anio, mes, cuota, empresa_id),
+    )
 
-    me = cur.execute("SELECT id, monto_cuota FROM mensualidades WHERE cliente_id=? AND anio=? AND mes=?",
-                     (cliente_id, anio, mes)).fetchone()
-    extras = cur.execute("SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=?",
-                         (me['id'],)).fetchone()['s']
+    me = cur.execute(
+        'SELECT id, monto_cuota FROM mensualidades WHERE cliente_id=? AND anio=? AND mes=? AND empresa_id=?',
+        (cliente_id, anio, mes, empresa_id),
+    ).fetchone()
+    extras = cur.execute(
+        'SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=? AND empresa_id=?',
+        (me['id'], empresa_id),
+    ).fetchone()['s']
     total = (me['monto_cuota'] or 0) + (extras or 0)
 
-    fecha_pago = datetime.now().strftime("%Y-%m-%d %H:%M")
-    cur.execute("UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=? WHERE id=?",
-                (fecha_pago, total, me['id']))
-    cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=?", (me['id'],))
+    fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
+    cur.execute('UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=? WHERE id=? AND empresa_id=?', (fecha_pago, total, me['id'], empresa_id))
+    cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (me['id'], empresa_id))
 
     _actualizar_flag_deudor(conn, cliente_id)
     conn.commit()
     conn.close()
-    return jsonify({"success": True})
+    return jsonify({'success': True})
+
 
 @app.route('/mensualidades/abonar/<int:mensualidad_id>', methods=['POST'])
 def mensualidades_abonar(mensualidad_id):
+    empresa_id = current_empresa_id()
     data = request.get_json(force=True) if request.is_json else request.form
     monto = _to_float(data.get('monto'))
     if monto is None or monto <= 0:
-        return jsonify({"success": False, "error": "Monto inválido"}), 400
+        return jsonify({'success': False, 'error': 'Monto inválido'}), 400
 
     conn = get_db()
     cur = conn.cursor()
     me = cur.execute(
-        "SELECT me.*, cl.cuota_mensual, cl.id AS cid FROM mensualidades me JOIN clientes cl ON cl.id=me.cliente_id WHERE me.id=?",
-        (mensualidad_id,)
+        "SELECT me.*, cl.cuota_mensual, cl.id AS cid FROM mensualidades me JOIN clientes cl ON cl.id=me.cliente_id AND cl.empresa_id=me.empresa_id WHERE me.id=? AND me.empresa_id=?",
+        (mensualidad_id, empresa_id),
     ).fetchone()
     if not me:
         conn.close()
-        return jsonify({"success": False, "error": "Mensualidad no encontrada"}), 404
+        return jsonify({'success': False, 'error': 'Mensualidad no encontrada'}), 404
 
-    extras = cur.execute("SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=?",
-                         (mensualidad_id,)).fetchone()['s']
+    extras = cur.execute(
+        'SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=? AND empresa_id=?',
+        (mensualidad_id, empresa_id),
+    ).fetchone()['s']
     monto_cuota = me['monto_cuota'] if me['monto_cuota'] is not None else me['cuota_mensual']
     total = (monto_cuota or 0) + (extras or 0)
     nuevo_pagado = (me['monto_pagado'] or 0) + monto
 
     if nuevo_pagado >= total:
-        fecha_pago = datetime.now().strftime("%Y-%m-%d %H:%M")
-        cur.execute("UPDATE mensualidades SET monto_pagado=?, pagado=1, fecha_pago=? WHERE id=?",
-                    (nuevo_pagado, fecha_pago, mensualidad_id))
-        cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=?", (mensualidad_id,))
+        fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
+        cur.execute('UPDATE mensualidades SET monto_pagado=?, pagado=1, fecha_pago=? WHERE id=? AND empresa_id=?', (nuevo_pagado, fecha_pago, mensualidad_id, empresa_id))
+        cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (mensualidad_id, empresa_id))
     else:
-        cur.execute("UPDATE mensualidades SET monto_pagado=?, pagado=0 WHERE id=?", (nuevo_pagado, mensualidad_id))
+        cur.execute('UPDATE mensualidades SET monto_pagado=?, pagado=0 WHERE id=? AND empresa_id=?', (nuevo_pagado, mensualidad_id, empresa_id))
 
     _actualizar_flag_deudor(conn, me['cid'])
     conn.commit()
     conn.close()
-    return jsonify({"success": True})
+    return jsonify({'success': True})
+
 
 def _asegurar_mensualidades_anio(conn, anio:int):
     cur = conn.cursor()
-    mensuales = conn.execute("SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND empresa_id=?", (current_empresa_id(),)).fetchall()
+    empresa_id = current_empresa_id()
+    _normalizar_mensualidades_empresa(conn, empresa_id)
+    mensuales = conn.execute("SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND empresa_id=?", (empresa_id,)).fetchall()
     for c in mensuales:
         cuota = c['cuota_mensual'] if c['cuota_mensual'] is not None else _calc_cuota_automatica(conn, c['id'])
         for mes in range(1, 13):
-            cur.execute("""
-                INSERT OR IGNORE INTO mensualidades (cliente_id, anio, mes, pagado, monto_cuota, monto_pagado)
-                VALUES (?, ?, ?, 0, ?, 0)
-            """, (c['id'], anio, mes, cuota))
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO mensualidades (cliente_id, anio, mes, pagado, monto_cuota, monto_pagado, empresa_id)
+                VALUES (?, ?, ?, 0, ?, 0, ?)
+                """,
+                (c['id'], anio, mes, cuota, empresa_id),
+            )
+            cur.execute(
+                'UPDATE mensualidades SET empresa_id=? WHERE cliente_id=? AND anio=? AND mes=?',
+                (empresa_id, c['id'], anio, mes),
+            )
     conn.commit()
+
 
 @app.route('/mensualidades/anual')
 def mensualidades_anual():
     anio = int(request.args.get('anio', datetime.now().year))
+    empresa_id = current_empresa_id()
     conn = get_db()
     _asegurar_mensualidades_anio(conn, anio)
     cur = conn.cursor()
 
-    clientes = cur.execute("""
+    clientes = cur.execute(
+        """
         SELECT id, nombre, cedula, telefono, deudor, tipo
-        FROM clientes WHERE tipo='Mensual' ORDER BY nombre COLLATE NOCASE
-    """).fetchall()
-    filas = cur.execute("""
+          FROM clientes
+         WHERE tipo='Mensual' AND empresa_id=?
+         ORDER BY nombre COLLATE NOCASE
+        """,
+        (empresa_id,),
+    ).fetchall()
+    filas = cur.execute(
+        """
         SELECT me.id AS mensualidad_id, me.cliente_id, me.mes, me.pagado, me.fecha_pago
-        FROM mensualidades me WHERE me.anio = ?
-    """, (anio,)).fetchall()
+          FROM mensualidades me
+         WHERE me.anio = ? AND me.empresa_id = ?
+        """,
+        (anio, empresa_id),
+    ).fetchall()
     conn.close()
 
     pagos = {}
@@ -2150,142 +2220,179 @@ def mensualidades_anual():
 
     return render_template('mensualidades_anual.html', anio=anio, clientes=clientes, pagos=pagos)
 
+
 @app.route('/mensualidades/cliente/<int:cliente_id>')
 def mensualidades_cliente(cliente_id):
     anio = int(request.args.get('anio', datetime.now().year))
+    empresa_id = current_empresa_id()
     conn = get_db()
     _asegurar_mensualidades_anio(conn, anio)
     cur = conn.cursor()
 
-    cliente = cur.execute("SELECT * FROM clientes WHERE id=?", (cliente_id,)).fetchone()
+    cliente = cur.execute('SELECT * FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
     if not cliente:
         conn.close()
         abort(404)
 
-    regs = cur.execute("""
+    regs = cur.execute(
+        """
         SELECT id AS mensualidad_id, mes, pagado, fecha_pago
-        FROM mensualidades
-        WHERE cliente_id=? AND anio=? ORDER BY mes
-    """, (cliente_id, anio)).fetchall()
+          FROM mensualidades
+         WHERE cliente_id=? AND anio=? AND empresa_id=?
+         ORDER BY mes
+        """,
+        (cliente_id, anio, empresa_id),
+    ).fetchall()
     conn.close()
 
     por_mes = {r['mes']: r for r in regs}
     return render_template('mensualidades_cliente.html', anio=anio, cliente=cliente, por_mes=por_mes)
 
+
 # ------- Gestionar consultas dentro de la mensualidad -------
 @app.route('/mensualidades/gestionar/<int:mensualidad_id>')
 def mensualidad_gestionar(mensualidad_id):
+    empresa_id = current_empresa_id()
     conn = get_db()
     cur = conn.cursor()
 
-    me = cur.execute("""
+    me = cur.execute(
+        """
         SELECT me.*, cl.nombre AS cliente_nombre, cl.cuota_mensual
-        FROM mensualidades me JOIN clientes cl ON cl.id=me.cliente_id WHERE me.id=?
-    """, (mensualidad_id,)).fetchone()
+          FROM mensualidades me
+          JOIN clientes cl ON cl.id=me.cliente_id AND cl.empresa_id=me.empresa_id
+         WHERE me.id=? AND me.empresa_id=?
+        """,
+        (mensualidad_id, empresa_id),
+    ).fetchone()
     if not me:
         conn.close()
         abort(404)
 
     ini, fin = _primer_y_ultimo_dia(me['anio'], me['mes'])
 
-    citas = cur.execute("""
+    citas = cur.execute(
+        """
         SELECT a.id, a.fecha, a.hora, a.estado_pago, a.cobrada_mensualidad_id, a.precio, a.lugar,
                d.nombre AS doctor_nombre, an.nombre AS animal_nombre, m.nombre AS motivo_nombre
-        FROM agenda a
-        JOIN doctores d ON d.id = a.doctor_id
-        JOIN animales an ON an.id = a.animal_id
-        LEFT JOIN motivos m ON m.id = a.motivo_id
-        WHERE a.cliente_id=? AND a.fecha BETWEEN ? AND ?
-        ORDER BY a.fecha, a.hora
-    """, (me['cliente_id'], ini, fin)).fetchall()
+          FROM agenda a
+          JOIN doctores d ON d.id = a.doctor_id AND d.empresa_id = a.empresa_id
+          JOIN animales an ON an.id = a.animal_id AND an.empresa_id = a.empresa_id
+          LEFT JOIN motivos m ON m.id = a.motivo_id AND m.empresa_id = a.empresa_id
+         WHERE a.cliente_id=? AND a.empresa_id=? AND a.fecha BETWEEN ? AND ?
+         ORDER BY a.fecha, a.hora
+        """,
+        (me['cliente_id'], empresa_id, ini, fin),
+    ).fetchall()
 
-    extras = cur.execute("SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=?",
-                         (mensualidad_id,)).fetchone()['s']
+    extras = cur.execute(
+        'SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda WHERE cobrada_mensualidad_id=? AND empresa_id=?',
+        (mensualidad_id, empresa_id),
+    ).fetchone()['s']
     monto_cuota = me['monto_cuota'] if me['monto_cuota'] is not None else _calc_cuota_automatica(conn, me['cliente_id'])
     total = (monto_cuota or 0) + (extras or 0)
     saldo = max(total - (me['monto_pagado'] or 0), 0)
 
     conn.close()
-    return render_template('mensualidad_gestion.html',
-                           mensualidad=me, citas=citas,
-                           extras=extras, monto_cuota=monto_cuota,
-                           total=total, saldo=saldo)
+    return render_template('mensualidad_gestion.html', mensualidad=me, citas=citas, extras=extras, monto_cuota=monto_cuota, total=total, saldo=saldo)
+
 
 @app.route('/mensualidades/asignar_cita', methods=['POST'])
 def mensualidad_asignar_cita():
+    empresa_id = current_empresa_id()
     data = request.get_json(force=True)
     cita_id = data.get('cita_id')
     mensualidad_id = data.get('mensualidad_id')
     if not cita_id or not mensualidad_id:
-        return jsonify({"success": False, "error": "Datos incompletos"}), 400
+        return jsonify({'success': False, 'error': 'Datos incompletos'}), 400
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("UPDATE agenda SET cobrada_mensualidad_id=? WHERE id=?", (mensualidad_id, cita_id))
 
-    row = cur.execute("SELECT cliente_id FROM agenda WHERE id=?", (cita_id,)).fetchone()
-    pagada = cur.execute("SELECT pagado FROM mensualidades WHERE id=?", (mensualidad_id,)).fetchone()
-    if pagada and pagada['pagado'] == 1:
-        cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE id=?", (cita_id,))
-        if row: _actualizar_flag_deudor(conn, row['cliente_id'])
+    mensualidad = cur.execute('SELECT id, cliente_id, pagado FROM mensualidades WHERE id=? AND empresa_id=?', (mensualidad_id, empresa_id)).fetchone()
+    if not mensualidad:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Mensualidad no encontrada'}), 404
+
+    cita = cur.execute('SELECT id, cliente_id FROM agenda WHERE id=? AND empresa_id=?', (cita_id, empresa_id)).fetchone()
+    if not cita or cita['cliente_id'] != mensualidad['cliente_id']:
+        conn.close()
+        return jsonify({'success': False, 'error': 'La cita no pertenece a esta veterinaria o a ese cliente'}), 400
+
+    cur.execute('UPDATE agenda SET cobrada_mensualidad_id=? WHERE id=? AND empresa_id=?', (mensualidad_id, cita_id, empresa_id))
+
+    if mensualidad['pagado'] == 1:
+        cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE id=? AND empresa_id=?", (cita_id, empresa_id))
+        _actualizar_flag_deudor(conn, cita['cliente_id'])
 
     conn.commit()
     conn.close()
-    return jsonify({"success": True})
+    return jsonify({'success': True})
+
 
 @app.route('/mensualidades/quitar_cita', methods=['POST'])
 def mensualidad_quitar_cita():
+    empresa_id = current_empresa_id()
     data = request.get_json(force=True)
     cita_id = data.get('cita_id')
     if not cita_id:
-        return jsonify({"success": False, "error": "Datos incompletos"}), 400
+        return jsonify({'success': False, 'error': 'Datos incompletos'}), 400
 
     conn = get_db()
     cur = conn.cursor()
-    cur.execute("UPDATE agenda SET cobrada_mensualidad_id=NULL WHERE id=?", (cita_id,))
+    row = cur.execute('SELECT cliente_id, COALESCE(precio,0) precio FROM agenda WHERE id=? AND empresa_id=?', (cita_id, empresa_id)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Cita no encontrada'}), 404
 
-    row = cur.execute("SELECT cliente_id, COALESCE(precio,0) precio FROM agenda WHERE id=?", (cita_id,)).fetchone()
-    cur.execute("UPDATE agenda SET estado_pago = CASE WHEN ? > 0 THEN 'Debe' ELSE estado_pago END WHERE id=?",
-                (row['precio'] if row else 0, cita_id))
-    if row:
-        _actualizar_flag_deudor(conn, row['cliente_id'])
+    cur.execute('UPDATE agenda SET cobrada_mensualidad_id=NULL WHERE id=? AND empresa_id=?', (cita_id, empresa_id))
+    cur.execute(
+        "UPDATE agenda SET estado_pago = CASE WHEN ? > 0 THEN 'Debe' ELSE estado_pago END WHERE id=? AND empresa_id=?",
+        (row['precio'], cita_id, empresa_id),
+    )
+    _actualizar_flag_deudor(conn, row['cliente_id'])
 
     conn.commit()
     conn.close()
-    return jsonify({"success": True})
+    return jsonify({'success': True})
+
 
 # ---------- PARTICULARES: Resumen y Detalle mensual ----------
 @app.route('/particulares', methods=['GET'])
 def particulares_resumen():
     hoy = datetime.now()
     anio = int(request.args.get('anio', hoy.year))
-    mes  = int(request.args.get('mes',  hoy.month))
+    mes = int(request.args.get('mes', hoy.month))
     q_nombre = (request.args.get('nombre') or '').strip()
     q_cedula = (request.args.get('cedula') or '').strip()
+    empresa_id = current_empresa_id()
 
     ini, fin = _primer_y_ultimo_dia(anio, mes)
     conn = get_db()
-    params = [ini, fin]
-    filtro_sql = ""
+    params = [ini, fin, empresa_id]
+    filtro_sql = ''
     if q_nombre:
-        filtro_sql += " AND c.nombre LIKE ?"
-        params.append(f"%{q_nombre}%")
+        filtro_sql += ' AND c.nombre LIKE ?'
+        params.append(f'%{q_nombre}%')
     if q_cedula:
-        filtro_sql += " AND c.cedula LIKE ?"
-        params.append(f"%{q_cedula}%")
+        filtro_sql += ' AND c.cedula LIKE ?'
+        params.append(f'%{q_cedula}%')
 
-    filas = conn.execute(f"""
+    filas = conn.execute(
+        f"""
         SELECT c.id, c.nombre, c.cedula, c.telefono,
                COUNT(a.id) AS citas,
                COALESCE(SUM(COALESCE(a.precio,0)),0) AS total,
                COALESCE(SUM(CASE WHEN a.estado_pago='Pagado' THEN COALESCE(a.precio,0) ELSE 0 END),0) AS cobrado
-        FROM clientes c
-        LEFT JOIN agenda a
-          ON a.cliente_id=c.id AND a.fecha BETWEEN ? AND ?
-        WHERE c.tipo='Particular' {filtro_sql}
-        GROUP BY c.id
-        ORDER BY c.nombre COLLATE NOCASE
-    """, params).fetchall()
+          FROM clientes c
+          LEFT JOIN agenda a
+            ON a.cliente_id = c.id AND a.empresa_id = c.empresa_id AND a.fecha BETWEEN ? AND ?
+         WHERE c.tipo='Particular' AND c.empresa_id=? {filtro_sql}
+         GROUP BY c.id
+         ORDER BY c.nombre COLLATE NOCASE
+        """,
+        params,
+    ).fetchall()
     conn.close()
 
     registros = []
@@ -2293,52 +2400,53 @@ def particulares_resumen():
         total = float(r['total'] or 0)
         cobrado = float(r['cobrado'] or 0)
         registros.append({
-            "id": r['id'],
-            "nombre": r['nombre'],
-            "cedula": r['cedula'],
-            "telefono": r['telefono'],
-            "citas": r['citas'],
-            "total": total,
-            "cobrado": cobrado,
-            "saldo": max(total - cobrado, 0.0),
+            'id': r['id'],
+            'nombre': r['nombre'],
+            'cedula': r['cedula'],
+            'telefono': r['telefono'],
+            'citas': r['citas'],
+            'total': total,
+            'cobrado': cobrado,
+            'saldo': max(total - cobrado, 0.0),
         })
 
-    return render_template('particulares_resumen.html',
-                           anio=anio, mes=mes, registros=registros,
-                           filtros={"nombre": q_nombre, "cedula": q_cedula})
+    return render_template('particulares_resumen.html', anio=anio, mes=mes, registros=registros, filtros={'nombre': q_nombre, 'cedula': q_cedula})
+
 
 @app.route('/particulares/cliente/<int:cliente_id>')
 def particulares_cliente(cliente_id):
     hoy = datetime.now()
     anio = int(request.args.get('anio', hoy.year))
-    mes  = int(request.args.get('mes',  hoy.month))
+    mes = int(request.args.get('mes', hoy.month))
+    empresa_id = current_empresa_id()
     ini, fin = _primer_y_ultimo_dia(anio, mes)
 
     conn = get_db()
-    cliente = conn.execute("SELECT * FROM clientes WHERE id=? AND empresa_id=?", (cliente_id, current_empresa_id())).fetchone()
+    cliente = conn.execute('SELECT * FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
     if not cliente or cliente['tipo'] != 'Particular':
         conn.close()
         abort(404)
 
-    citas = conn.execute("""
+    citas = conn.execute(
+        """
         SELECT a.id, a.fecha, a.hora, a.estado_pago, a.precio, a.lugar,
                d.nombre AS doctor_nombre, an.nombre AS animal_nombre, m.nombre AS motivo_nombre
-        FROM agenda a
-        JOIN doctores d ON d.id=a.doctor_id
-        JOIN animales an ON an.id=a.animal_id
-        LEFT JOIN motivos m ON m.id=a.motivo_id
-        WHERE a.cliente_id=? AND a.fecha BETWEEN ? AND ?
-        ORDER BY a.fecha, a.hora
-    """, (cliente_id, ini, fin)).fetchall()
+          FROM agenda a
+          JOIN doctores d ON d.id=a.doctor_id AND d.empresa_id=a.empresa_id
+          JOIN animales an ON an.id=a.animal_id AND an.empresa_id=a.empresa_id
+          LEFT JOIN motivos m ON m.id=a.motivo_id AND m.empresa_id=a.empresa_id
+         WHERE a.cliente_id=? AND a.empresa_id=? AND a.fecha BETWEEN ? AND ?
+         ORDER BY a.fecha, a.hora
+        """,
+        (cliente_id, empresa_id, ini, fin),
+    ).fetchall()
 
     tot = sum((c['precio'] or 0) for c in citas)
-    cob = sum((c['precio'] or 0) for c in citas if c['estado_pago']=='Pagado')
+    cob = sum((c['precio'] or 0) for c in citas if c['estado_pago'] == 'Pagado')
     saldo = max(tot - cob, 0)
 
     conn.close()
-    return render_template('particulares_cliente.html',
-                           cliente=cliente, anio=anio, mes=mes,
-                           citas=citas, total=tot, cobrado=cob, saldo=saldo)
+    return render_template('particulares_cliente.html', cliente=cliente, anio=anio, mes=mes, citas=citas, total=tot, cobrado=cob, saldo=saldo)
 
 # ---------- FERIADOS ----------
 @app.route("/feriados", methods=["GET", "POST"])

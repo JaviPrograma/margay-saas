@@ -388,59 +388,23 @@ def _gen_despa_auto(conn, empresa_id, today, cfg):
     if not int(cfg['despa_enabled'] or 0):
         return
     dias = int(cfg['despa_dias_antes'] or 7)
-    intervalo = int(cfg['despa_intervalo_dias'] or 90)
     objetivo = today + dt.timedelta(days=dias)
     programado = _dt_on(today, cfg['despa_hora'] or '10:00').strftime('%Y-%m-%d %H:%M')
     clinica = _empresa_nombre(conn, empresa_id)
-
-    # Primero intenta trabajar igual que vacunas: por fecha de vencimiento explícita.
-    # Para compatibilidad con datos viejos, si un animal no tiene desparasitación cargada
-    # con vencimiento, se usa ultima_desparasitacion + intervalo interno (sin mostrarlo en pantalla).
     filas = conn.execute("""
-        SELECT
-            a.id AS animal_id,
-            a.nombre AS animal_nombre,
-            a.ultima_desparasitacion,
-            c.id AS cliente_id,
-            c.nombre AS cliente_nombre,
-            c.email,
-            (
-                SELECT d.fecha_vencimiento
-                FROM desparasitaciones d
-                WHERE d.animal_id = a.id
-                  AND d.empresa_id = a.empresa_id
-                  AND COALESCE(d.fecha_vencimiento, '') <> ''
-                ORDER BY DATE(d.fecha_vencimiento) DESC, d.id DESC
-                LIMIT 1
-            ) AS fecha_vencimiento
-        FROM animales a
-        JOIN clientes c ON c.id = a.cliente_id
-        WHERE a.empresa_id=? AND c.empresa_id=? AND COALESCE(c.email,'')<>''
-        ORDER BY c.nombre, a.nombre
-    """, (empresa_id, empresa_id)).fetchall()
+        SELECT d.id AS despa_id, d.fecha_vencimiento, a.id AS animal_id, a.nombre AS animal_nombre,
+               c.id AS cliente_id, c.nombre AS cliente_nombre, c.email
+        FROM desparasitaciones d
+        JOIN animales a ON a.id=d.animal_id
+        JOIN clientes c ON c.id=a.cliente_id
+        WHERE d.empresa_id=? AND c.empresa_id=? AND DATE(d.fecha_vencimiento)=DATE(?) AND COALESCE(c.email,'')<>''
+        ORDER BY c.nombre, a.nombre, d.id DESC
+    """, (empresa_id, empresa_id, objetivo.strftime('%Y-%m-%d'))).fetchall()
+    tpl = cfg['despa_template'] or "Hola {CLIENTE}, estas desparasitaciones están próximas a vencer:
 
-    tpl = cfg['despa_template'] or "Hola {CLIENTE}, estas desparasitaciones están próximas a vencer:\n\n{LISTADO}"
+{LISTADO}"
     for r in filas:
-        referencia = (r['fecha_vencimiento'] or '').strip()
-
-        if referencia:
-            try:
-                vence = dt.datetime.strptime(referencia[:10], '%Y-%m-%d').date()
-            except Exception:
-                continue
-        else:
-            ultima = (r['ultima_desparasitacion'] or '').strip()
-            if not ultima:
-                continue
-            try:
-                vence = dt.datetime.strptime(ultima[:10], '%Y-%m-%d').date() + dt.timedelta(days=intervalo)
-            except Exception:
-                continue
-            referencia = vence.strftime('%Y-%m-%d')
-
-        if vence != objetivo:
-            continue
-
+        referencia = r['fecha_vencimiento']
         asunto = f"{clinica} - Desparasitación próxima a vencer"
         listado = f"- {r['animal_nombre']}: vence {referencia}"
         msg = _render_placeholders(
@@ -452,18 +416,7 @@ def _gen_despa_auto(conn, empresa_id, today, cfg):
             empresa=clinica,
             tipo='desparasitación',
         )
-        _enqueue(
-            conn,
-            empresa_id,
-            'desparasitacion',
-            cliente_id=r['cliente_id'],
-            animal_id=r['animal_id'],
-            referencia_fecha=referencia,
-            email_destino=r['email'],
-            asunto=asunto,
-            mensaje=msg,
-            programado_en=programado,
-        )
+        _enqueue(conn, empresa_id, 'desparasitacion', cliente_id=r['cliente_id'], animal_id=r['animal_id'], referencia_fecha=referencia, email_destino=r['email'], asunto=asunto, mensaje=msg, programado_en=programado)
 
 
 def _gen_part_impagos_auto(conn, empresa_id, today, cfg):
