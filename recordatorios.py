@@ -392,30 +392,26 @@ def _gen_despa_auto(conn, empresa_id, today, cfg):
     programado = _dt_on(today, cfg['despa_hora'] or '10:00').strftime('%Y-%m-%d %H:%M')
     clinica = _empresa_nombre(conn, empresa_id)
     filas = conn.execute("""
-        SELECT d.id AS despa_id, d.fecha_vencimiento,
-               a.id AS animal_id, a.nombre AS animal_nombre,
+        SELECT d.id AS despa_id, d.fecha_vencimiento, a.id AS animal_id, a.nombre AS animal_nombre,
                c.id AS cliente_id, c.nombre AS cliente_nombre, c.email
         FROM desparasitaciones d
         JOIN animales a ON a.id=d.animal_id
         JOIN clientes c ON c.id=a.cliente_id
-        WHERE d.empresa_id=? AND a.empresa_id=? AND c.empresa_id=?
-          AND DATE(d.fecha_vencimiento)=DATE(?)
-          AND COALESCE(c.email,'')<>''
+        WHERE d.empresa_id=? AND c.empresa_id=? AND DATE(d.fecha_vencimiento)=DATE(?) AND COALESCE(c.email,'')<>''
         ORDER BY c.nombre, a.nombre, d.id DESC
-    """, (empresa_id, empresa_id, empresa_id, objetivo.strftime('%Y-%m-%d'))).fetchall()
+    """, (empresa_id, empresa_id, objetivo.strftime('%Y-%m-%d'))).fetchall()
     tpl = cfg['despa_template'] or "Hola {CLIENTE}, estas desparasitaciones están próximas a vencer:
 
 {LISTADO}"
     for r in filas:
         referencia = r['fecha_vencimiento']
         asunto = f"{clinica} - Desparasitación próxima a vencer"
-        fecha_vto = r['fecha_vencimiento']
-        listado = f"- {r['animal_nombre']}: vence {fecha_vto}"
+        listado = f"- {r['animal_nombre']}: vence {referencia}"
         msg = _render_placeholders(
             tpl,
             cliente=r['cliente_nombre'],
             animal=r['animal_nombre'],
-            fecha=fecha_vto,
+            fecha=referencia,
             listado=listado,
             empresa=clinica,
             tipo='desparasitación',
@@ -591,7 +587,7 @@ def config():
         'despa_template': (f.get('despa_template') or '').strip(),
         'despa_hora': (f.get('despa_hora') or '10:00').strip(),
         'despa_dias_antes': int(f.get('despa_dias_antes') or 7),
-        'despa_intervalo_dias': int(f.get('despa_intervalo_dias') or 90),
+        'despa_intervalo_dias': 90,
         'part_enabled': 1 if f.get('part_enabled') else 0,
         'part_template': (f.get('part_template') or '').strip(),
         'part_hora': (f.get('part_hora') or '10:00').strip(),
