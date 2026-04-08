@@ -46,6 +46,26 @@ def current_empresa_id():
 def current_user_id():
     return session.get('user_id')
 
+def current_empresa_id_resolved(conn=None):
+    empresa_id = session.get('empresa_id')
+    user_id = session.get('user_id')
+    if not user_id:
+        return empresa_id
+    own_conn = False
+    if conn is None:
+        conn = get_db()
+        own_conn = True
+    try:
+        row = conn.execute('SELECT empresa_id, email, nombre, rol FROM usuarios WHERE id=? AND activo=1', (user_id,)).fetchone()
+        if row and row['empresa_id']:
+            if empresa_id != row['empresa_id']:
+                session['empresa_id'] = row['empresa_id']
+            return row['empresa_id']
+        return empresa_id
+    finally:
+        if own_conn:
+            conn.close()
+
 
 def is_margay_master():
     email = (session.get('user_email') or '').strip().lower()
@@ -741,6 +761,7 @@ def login():
                 (empresa_id, email)
             ).fetchone()
             if user and check_password_hash(user['password_hash'], password):
+                session.clear()
                 session['user_id'] = user['id']
                 session['empresa_id'] = user['empresa_id']
                 session['empresa_nombre'] = user['empresa_nombre']
@@ -1142,8 +1163,9 @@ def clientes():
     q_tipo   = (request.args.get("tipo", "") or "").strip()
 
     conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     query = "SELECT * FROM clientes WHERE empresa_id=?"
-    params = [current_empresa_id()]
+    params = [empresa_id]
 
     if q_nombre:
         like = f"%{q_nombre}%"
@@ -1967,7 +1989,7 @@ def whatsapp_web_cita(cita_id):
     # Abrir WhatsApp en una pestaña nueva y mantener el sistema abierto.
     return render_template("whatsapp.auto.html", phone=phone_digits, text=text)
 def _normalizar_mensualidades_empresa(conn, empresa_id=None):
-    empresa_id = empresa_id or current_empresa_id()
+    empresa_id = empresa_id or current_empresa_id_resolved(conn)
     if not empresa_id:
         return
     conn.execute(
@@ -1979,14 +2001,13 @@ def _normalizar_mensualidades_empresa(conn, empresa_id=None):
         """,
         (empresa_id, empresa_id, empresa_id),
     )
+    conn.commit()
 
 def _sanear_facturacion_empresa(conn, empresa_id=None):
-    empresa_id = empresa_id or current_empresa_id()
+    empresa_id = empresa_id or current_empresa_id_resolved(conn)
     if not empresa_id:
         return
 
-    # Borrar mensualidades contaminadas: registros asignados a esta empresa
-    # pero que apuntan a clientes de otra veterinaria.
     conn.execute(
         """
         DELETE FROM mensualidades
@@ -1998,7 +2019,6 @@ def _sanear_facturacion_empresa(conn, empresa_id=None):
         (empresa_id, empresa_id),
     )
 
-    # Desvincular citas que apunten a mensualidades inexistentes o ajenas.
     conn.execute(
         """
         UPDATE agenda
@@ -2012,7 +2032,7 @@ def _sanear_facturacion_empresa(conn, empresa_id=None):
         (empresa_id, empresa_id),
     )
 
-    _sanear_facturacion_empresa(conn, empresa_id)
+    conn.commit()
 
 
 @app.route('/mensualidades', methods=['GET'])
@@ -2021,9 +2041,9 @@ def mensualidades():
     hoy = datetime.now()
     anio = int(request.values.get('anio', hoy.year))
     mes = int(request.values.get('mes', hoy.month))
-    empresa_id = current_empresa_id()
-
     conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
+
     cur = conn.cursor()
 
     _normalizar_mensualidades_empresa(conn, empresa_id)
@@ -2061,10 +2081,10 @@ def mensualidades():
                cl.nombre, cl.cedula, cl.telefono, cl.deudor, cl.activo
           FROM mensualidades me
           JOIN clientes cl ON cl.id = me.cliente_id
-         WHERE me.anio = ? AND me.mes = ? AND cl.empresa_id = ? AND cl.tipo='Mensual' AND cl.activo=1
+         WHERE me.anio = ? AND me.mes = ? AND me.empresa_id = ? AND cl.empresa_id = ? AND cl.tipo='Mensual' AND cl.activo=1
          ORDER BY cl.nombre COLLATE NOCASE
         """,
-        (anio, mes, empresa_id),
+        (anio, mes, empresa_id, empresa_id),
     ).fetchall()
 
     registros = []
@@ -2084,7 +2104,8 @@ def mensualidades():
 @app.route('/mensualidades/toggle/<int:mensualidad_id>', methods=['POST'])
 @require_auth
 def mensualidad_toggle(mensualidad_id):
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     conn = get_db()
     _sanear_facturacion_empresa(conn, empresa_id)
     cur = conn.cursor()
@@ -2128,7 +2149,8 @@ def mensualidad_toggle(mensualidad_id):
 @app.route('/mensualidades/registrar_pago/<int:cliente_id>', methods=['POST'])
 @require_auth
 def mensualidades_registrar_pago(cliente_id):
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     hoy = datetime.now()
     anio, mes = hoy.year, hoy.month
     conn = get_db()
@@ -2167,7 +2189,8 @@ def mensualidades_registrar_pago(cliente_id):
 @app.route('/mensualidades/abonar/<int:mensualidad_id>', methods=['POST'])
 @require_auth
 def mensualidades_abonar(mensualidad_id):
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     data = request.get_json(force=True) if request.is_json else request.form
     monto = _to_float(data.get('monto'))
     if monto is None or monto <= 0:
@@ -2230,7 +2253,8 @@ def _asegurar_mensualidades_anio(conn, anio:int):
 @require_auth
 def mensualidades_anual():
     anio = int(request.args.get('anio', datetime.now().year))
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     conn = get_db()
     _sanear_facturacion_empresa(conn, empresa_id)
     _asegurar_mensualidades_anio(conn, anio)
@@ -2250,9 +2274,9 @@ def mensualidades_anual():
         SELECT me.id AS mensualidad_id, me.cliente_id, me.mes, me.pagado, me.fecha_pago
           FROM mensualidades me
           JOIN clientes cl ON cl.id = me.cliente_id
-         WHERE me.anio = ? AND cl.empresa_id = ? AND cl.tipo='Mensual'
+         WHERE me.anio = ? AND me.empresa_id = ? AND cl.empresa_id = ? AND cl.tipo='Mensual'
         """,
-        (anio, empresa_id),
+        (anio, empresa_id, empresa_id),
     ).fetchall()
     conn.close()
 
@@ -2267,7 +2291,8 @@ def mensualidades_anual():
 @require_auth
 def mensualidades_cliente(cliente_id):
     anio = int(request.args.get('anio', datetime.now().year))
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     conn = get_db()
     _sanear_facturacion_empresa(conn, empresa_id)
     _asegurar_mensualidades_anio(conn, anio)
@@ -2297,7 +2322,8 @@ def mensualidades_cliente(cliente_id):
 @app.route('/mensualidades/gestionar/<int:mensualidad_id>')
 @require_auth
 def mensualidad_gestionar(mensualidad_id):
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     conn = get_db()
     cur = conn.cursor()
 
@@ -2345,7 +2371,8 @@ def mensualidad_gestionar(mensualidad_id):
 @app.route('/mensualidades/asignar_cita', methods=['POST'])
 @require_auth
 def mensualidad_asignar_cita():
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     data = request.get_json(force=True)
     cita_id = data.get('cita_id')
     mensualidad_id = data.get('mensualidad_id')
@@ -2379,7 +2406,8 @@ def mensualidad_asignar_cita():
 @app.route('/mensualidades/quitar_cita', methods=['POST'])
 @require_auth
 def mensualidad_quitar_cita():
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     data = request.get_json(force=True)
     cita_id = data.get('cita_id')
     if not cita_id:
@@ -2413,7 +2441,8 @@ def particulares_resumen():
     mes = int(request.args.get('mes', hoy.month))
     q_nombre = (request.args.get('nombre') or '').strip()
     q_cedula = (request.args.get('cedula') or '').strip()
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
 
     ini, fin = _primer_y_ultimo_dia(anio, mes)
     conn = get_db()
@@ -2468,7 +2497,8 @@ def particulares_cliente(cliente_id):
     hoy = datetime.now()
     anio = int(request.args.get('anio', hoy.year))
     mes = int(request.args.get('mes', hoy.month))
-    empresa_id = current_empresa_id()
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
     ini, fin = _primer_y_ultimo_dia(anio, mes)
 
     conn = get_db()
