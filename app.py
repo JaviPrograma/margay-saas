@@ -1980,17 +1980,39 @@ def _normalizar_mensualidades_empresa(conn, empresa_id=None):
         (empresa_id, empresa_id, empresa_id),
     )
 
+def _sanear_facturacion_empresa(conn, empresa_id=None):
+    empresa_id = empresa_id or current_empresa_id()
+    if not empresa_id:
+        return
 
-def _cliente_ids_empresa(conn, empresa_id, tipo=None, solo_activos=False):
-    sql = "SELECT id FROM clientes WHERE empresa_id=?"
-    params = [empresa_id]
-    if tipo:
-        sql += " AND tipo=?"
-        params.append(tipo)
-    if solo_activos:
-        sql += " AND activo=1"
-    rows = conn.execute(sql, tuple(params)).fetchall()
-    return [r['id'] for r in rows]
+    # Borrar mensualidades contaminadas: registros asignados a esta empresa
+    # pero que apuntan a clientes de otra veterinaria.
+    conn.execute(
+        """
+        DELETE FROM mensualidades
+         WHERE empresa_id = ?
+           AND cliente_id NOT IN (
+               SELECT id FROM clientes WHERE empresa_id = ?
+           )
+        """,
+        (empresa_id, empresa_id),
+    )
+
+    # Desvincular citas que apunten a mensualidades inexistentes o ajenas.
+    conn.execute(
+        """
+        UPDATE agenda
+           SET cobrada_mensualidad_id = NULL
+         WHERE empresa_id = ?
+           AND cobrada_mensualidad_id IS NOT NULL
+           AND cobrada_mensualidad_id NOT IN (
+               SELECT id FROM mensualidades WHERE empresa_id = ?
+           )
+        """,
+        (empresa_id, empresa_id),
+    )
+
+    _sanear_facturacion_empresa(conn, empresa_id)
 
 
 @app.route('/mensualidades', methods=['GET'])
@@ -2006,15 +2028,9 @@ def mensualidades():
 
     _normalizar_mensualidades_empresa(conn, empresa_id)
 
-    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Mensual', solo_activos=True)
-    if not cliente_ids_empresa:
-        conn.close()
-        return render_template('mensualidades.html', registros=[], anio=anio, mes=mes)
-
-    placeholders = ','.join('?' for _ in cliente_ids_empresa)
     mensuales = cur.execute(
-        f"SELECT id, cuota_mensual FROM clientes WHERE id IN ({placeholders}) ORDER BY nombre COLLATE NOCASE",
-        tuple(cliente_ids_empresa),
+        "SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND activo=1 AND empresa_id=?",
+        (empresa_id,),
     ).fetchall()
 
     for c in mensuales:
@@ -2039,17 +2055,16 @@ def mensualidades():
     conn.commit()
 
     filas = cur.execute(
-        f"""
+        """
         SELECT me.id AS mensualidad_id, me.cliente_id, me.anio, me.mes, me.pagado, me.fecha_pago,
                me.monto_cuota, me.monto_pagado,
                cl.nombre, cl.cedula, cl.telefono, cl.deudor, cl.activo
           FROM mensualidades me
           JOIN clientes cl ON cl.id = me.cliente_id
-         WHERE me.anio = ? AND me.mes = ?
-           AND cl.id IN ({placeholders})
+         WHERE me.anio = ? AND me.mes = ? AND cl.empresa_id = ? AND cl.tipo='Mensual' AND cl.activo=1
          ORDER BY cl.nombre COLLATE NOCASE
         """,
-        (anio, mes, *cliente_ids_empresa),
+        (anio, mes, empresa_id),
     ).fetchall()
 
     registros = []
@@ -2071,6 +2086,7 @@ def mensualidades():
 def mensualidad_toggle(mensualidad_id):
     empresa_id = current_empresa_id()
     conn = get_db()
+    _sanear_facturacion_empresa(conn, empresa_id)
     cur = conn.cursor()
 
     me = cur.execute(
@@ -2191,13 +2207,8 @@ def mensualidades_abonar(mensualidad_id):
 def _asegurar_mensualidades_anio(conn, anio:int):
     cur = conn.cursor()
     empresa_id = current_empresa_id()
-    _normalizar_mensualidades_empresa(conn, empresa_id)
-    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Mensual')
-    if not cliente_ids_empresa:
-        conn.commit()
-        return
-    placeholders = ','.join('?' for _ in cliente_ids_empresa)
-    mensuales = conn.execute(f"SELECT id, cuota_mensual FROM clientes WHERE id IN ({placeholders})", tuple(cliente_ids_empresa)).fetchall()
+    _sanear_facturacion_empresa(conn, empresa_id)
+    mensuales = conn.execute("SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND empresa_id=?", (empresa_id,)).fetchall()
     for c in mensuales:
         cuota = c['cuota_mensual'] if c['cuota_mensual'] is not None else _calc_cuota_automatica(conn, c['id'])
         for mes in range(1, 13):
@@ -2221,31 +2232,27 @@ def mensualidades_anual():
     anio = int(request.args.get('anio', datetime.now().year))
     empresa_id = current_empresa_id()
     conn = get_db()
+    _sanear_facturacion_empresa(conn, empresa_id)
     _asegurar_mensualidades_anio(conn, anio)
     cur = conn.cursor()
 
-    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Mensual')
-    if not cliente_ids_empresa:
-        conn.close()
-        return render_template('mensualidades_anual.html', anio=anio, clientes=[], pagos={})
-    placeholders = ','.join('?' for _ in cliente_ids_empresa)
     clientes = cur.execute(
-        f"""
+        """
         SELECT id, nombre, cedula, telefono, deudor, tipo
           FROM clientes
-         WHERE id IN ({placeholders})
+         WHERE tipo='Mensual' AND empresa_id=?
          ORDER BY nombre COLLATE NOCASE
         """,
-        tuple(cliente_ids_empresa),
+        (empresa_id,),
     ).fetchall()
     filas = cur.execute(
-        f"""
+        """
         SELECT me.id AS mensualidad_id, me.cliente_id, me.mes, me.pagado, me.fecha_pago
           FROM mensualidades me
-         WHERE me.anio = ?
-           AND me.cliente_id IN ({placeholders})
+          JOIN clientes cl ON cl.id = me.cliente_id
+         WHERE me.anio = ? AND cl.empresa_id = ? AND cl.tipo='Mensual'
         """,
-        (anio, *cliente_ids_empresa),
+        (anio, empresa_id),
     ).fetchall()
     conn.close()
 
@@ -2262,6 +2269,7 @@ def mensualidades_cliente(cliente_id):
     anio = int(request.args.get('anio', datetime.now().year))
     empresa_id = current_empresa_id()
     conn = get_db()
+    _sanear_facturacion_empresa(conn, empresa_id)
     _asegurar_mensualidades_anio(conn, anio)
     cur = conn.cursor()
 
@@ -2409,12 +2417,8 @@ def particulares_resumen():
 
     ini, fin = _primer_y_ultimo_dia(anio, mes)
     conn = get_db()
-    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Particular')
-    if not cliente_ids_empresa:
-        conn.close()
-        return render_template('particulares_resumen.html', anio=anio, mes=mes, registros=[], filtros={'nombre': q_nombre, 'cedula': q_cedula})
-    placeholders = ','.join('?' for _ in cliente_ids_empresa)
-    params = [ini, fin, *cliente_ids_empresa]
+    _sanear_facturacion_empresa(conn, empresa_id)
+    params = [ini, fin, empresa_id]
     filtro_sql = ''
     if q_nombre:
         filtro_sql += ' AND c.nombre LIKE ?'
@@ -2432,7 +2436,7 @@ def particulares_resumen():
           FROM clientes c
           LEFT JOIN agenda a
             ON a.cliente_id = c.id AND a.empresa_id = c.empresa_id AND a.fecha BETWEEN ? AND ?
-         WHERE c.id IN ({placeholders}) {filtro_sql}
+         WHERE c.tipo='Particular' AND c.empresa_id=? {filtro_sql}
          GROUP BY c.id
          ORDER BY c.nombre COLLATE NOCASE
         """,
@@ -2468,6 +2472,7 @@ def particulares_cliente(cliente_id):
     ini, fin = _primer_y_ultimo_dia(anio, mes)
 
     conn = get_db()
+    _sanear_facturacion_empresa(conn, empresa_id)
     cliente = conn.execute('SELECT * FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
     if not cliente or cliente['tipo'] != 'Particular':
         conn.close()
