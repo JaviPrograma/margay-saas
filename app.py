@@ -1981,7 +1981,20 @@ def _normalizar_mensualidades_empresa(conn, empresa_id=None):
     )
 
 
+def _cliente_ids_empresa(conn, empresa_id, tipo=None, solo_activos=False):
+    sql = "SELECT id FROM clientes WHERE empresa_id=?"
+    params = [empresa_id]
+    if tipo:
+        sql += " AND tipo=?"
+        params.append(tipo)
+    if solo_activos:
+        sql += " AND activo=1"
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    return [r['id'] for r in rows]
+
+
 @app.route('/mensualidades', methods=['GET'])
+@require_auth
 def mensualidades():
     hoy = datetime.now()
     anio = int(request.values.get('anio', hoy.year))
@@ -1993,9 +2006,15 @@ def mensualidades():
 
     _normalizar_mensualidades_empresa(conn, empresa_id)
 
+    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Mensual', solo_activos=True)
+    if not cliente_ids_empresa:
+        conn.close()
+        return render_template('mensualidades.html', registros=[], anio=anio, mes=mes)
+
+    placeholders = ','.join('?' for _ in cliente_ids_empresa)
     mensuales = cur.execute(
-        "SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND activo=1 AND empresa_id=?",
-        (empresa_id,),
+        f"SELECT id, cuota_mensual FROM clientes WHERE id IN ({placeholders}) ORDER BY nombre COLLATE NOCASE",
+        tuple(cliente_ids_empresa),
     ).fetchall()
 
     for c in mensuales:
@@ -2020,16 +2039,17 @@ def mensualidades():
     conn.commit()
 
     filas = cur.execute(
-        """
+        f"""
         SELECT me.id AS mensualidad_id, me.cliente_id, me.anio, me.mes, me.pagado, me.fecha_pago,
                me.monto_cuota, me.monto_pagado,
                cl.nombre, cl.cedula, cl.telefono, cl.deudor, cl.activo
           FROM mensualidades me
-          JOIN clientes cl ON cl.id = me.cliente_id AND cl.empresa_id = me.empresa_id
-         WHERE me.anio = ? AND me.mes = ? AND me.empresa_id = ?
+          JOIN clientes cl ON cl.id = me.cliente_id
+         WHERE me.anio = ? AND me.mes = ?
+           AND cl.id IN ({placeholders})
          ORDER BY cl.nombre COLLATE NOCASE
         """,
-        (anio, mes, empresa_id),
+        (anio, mes, *cliente_ids_empresa),
     ).fetchall()
 
     registros = []
@@ -2047,6 +2067,7 @@ def mensualidades():
 
 
 @app.route('/mensualidades/toggle/<int:mensualidad_id>', methods=['POST'])
+@require_auth
 def mensualidad_toggle(mensualidad_id):
     empresa_id = current_empresa_id()
     conn = get_db()
@@ -2089,6 +2110,7 @@ def mensualidad_toggle(mensualidad_id):
 
 
 @app.route('/mensualidades/registrar_pago/<int:cliente_id>', methods=['POST'])
+@require_auth
 def mensualidades_registrar_pago(cliente_id):
     empresa_id = current_empresa_id()
     hoy = datetime.now()
@@ -2127,6 +2149,7 @@ def mensualidades_registrar_pago(cliente_id):
 
 
 @app.route('/mensualidades/abonar/<int:mensualidad_id>', methods=['POST'])
+@require_auth
 def mensualidades_abonar(mensualidad_id):
     empresa_id = current_empresa_id()
     data = request.get_json(force=True) if request.is_json else request.form
@@ -2169,7 +2192,12 @@ def _asegurar_mensualidades_anio(conn, anio:int):
     cur = conn.cursor()
     empresa_id = current_empresa_id()
     _normalizar_mensualidades_empresa(conn, empresa_id)
-    mensuales = conn.execute("SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND empresa_id=?", (empresa_id,)).fetchall()
+    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Mensual')
+    if not cliente_ids_empresa:
+        conn.commit()
+        return
+    placeholders = ','.join('?' for _ in cliente_ids_empresa)
+    mensuales = conn.execute(f"SELECT id, cuota_mensual FROM clientes WHERE id IN ({placeholders})", tuple(cliente_ids_empresa)).fetchall()
     for c in mensuales:
         cuota = c['cuota_mensual'] if c['cuota_mensual'] is not None else _calc_cuota_automatica(conn, c['id'])
         for mes in range(1, 13):
@@ -2188,6 +2216,7 @@ def _asegurar_mensualidades_anio(conn, anio:int):
 
 
 @app.route('/mensualidades/anual')
+@require_auth
 def mensualidades_anual():
     anio = int(request.args.get('anio', datetime.now().year))
     empresa_id = current_empresa_id()
@@ -2195,22 +2224,28 @@ def mensualidades_anual():
     _asegurar_mensualidades_anio(conn, anio)
     cur = conn.cursor()
 
+    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Mensual')
+    if not cliente_ids_empresa:
+        conn.close()
+        return render_template('mensualidades_anual.html', anio=anio, clientes=[], pagos={})
+    placeholders = ','.join('?' for _ in cliente_ids_empresa)
     clientes = cur.execute(
-        """
+        f"""
         SELECT id, nombre, cedula, telefono, deudor, tipo
           FROM clientes
-         WHERE tipo='Mensual' AND empresa_id=?
+         WHERE id IN ({placeholders})
          ORDER BY nombre COLLATE NOCASE
         """,
-        (empresa_id,),
+        tuple(cliente_ids_empresa),
     ).fetchall()
     filas = cur.execute(
-        """
+        f"""
         SELECT me.id AS mensualidad_id, me.cliente_id, me.mes, me.pagado, me.fecha_pago
           FROM mensualidades me
-         WHERE me.anio = ? AND me.empresa_id = ?
+         WHERE me.anio = ?
+           AND me.cliente_id IN ({placeholders})
         """,
-        (anio, empresa_id),
+        (anio, *cliente_ids_empresa),
     ).fetchall()
     conn.close()
 
@@ -2222,6 +2257,7 @@ def mensualidades_anual():
 
 
 @app.route('/mensualidades/cliente/<int:cliente_id>')
+@require_auth
 def mensualidades_cliente(cliente_id):
     anio = int(request.args.get('anio', datetime.now().year))
     empresa_id = current_empresa_id()
@@ -2251,6 +2287,7 @@ def mensualidades_cliente(cliente_id):
 
 # ------- Gestionar consultas dentro de la mensualidad -------
 @app.route('/mensualidades/gestionar/<int:mensualidad_id>')
+@require_auth
 def mensualidad_gestionar(mensualidad_id):
     empresa_id = current_empresa_id()
     conn = get_db()
@@ -2298,6 +2335,7 @@ def mensualidad_gestionar(mensualidad_id):
 
 
 @app.route('/mensualidades/asignar_cita', methods=['POST'])
+@require_auth
 def mensualidad_asignar_cita():
     empresa_id = current_empresa_id()
     data = request.get_json(force=True)
@@ -2331,6 +2369,7 @@ def mensualidad_asignar_cita():
 
 
 @app.route('/mensualidades/quitar_cita', methods=['POST'])
+@require_auth
 def mensualidad_quitar_cita():
     empresa_id = current_empresa_id()
     data = request.get_json(force=True)
@@ -2359,6 +2398,7 @@ def mensualidad_quitar_cita():
 
 # ---------- PARTICULARES: Resumen y Detalle mensual ----------
 @app.route('/particulares', methods=['GET'])
+@require_auth
 def particulares_resumen():
     hoy = datetime.now()
     anio = int(request.args.get('anio', hoy.year))
@@ -2369,7 +2409,12 @@ def particulares_resumen():
 
     ini, fin = _primer_y_ultimo_dia(anio, mes)
     conn = get_db()
-    params = [ini, fin, empresa_id]
+    cliente_ids_empresa = _cliente_ids_empresa(conn, empresa_id, tipo='Particular')
+    if not cliente_ids_empresa:
+        conn.close()
+        return render_template('particulares_resumen.html', anio=anio, mes=mes, registros=[], filtros={'nombre': q_nombre, 'cedula': q_cedula})
+    placeholders = ','.join('?' for _ in cliente_ids_empresa)
+    params = [ini, fin, *cliente_ids_empresa]
     filtro_sql = ''
     if q_nombre:
         filtro_sql += ' AND c.nombre LIKE ?'
@@ -2387,7 +2432,7 @@ def particulares_resumen():
           FROM clientes c
           LEFT JOIN agenda a
             ON a.cliente_id = c.id AND a.empresa_id = c.empresa_id AND a.fecha BETWEEN ? AND ?
-         WHERE c.tipo='Particular' AND c.empresa_id=? {filtro_sql}
+         WHERE c.id IN ({placeholders}) {filtro_sql}
          GROUP BY c.id
          ORDER BY c.nombre COLLATE NOCASE
         """,
@@ -2414,6 +2459,7 @@ def particulares_resumen():
 
 
 @app.route('/particulares/cliente/<int:cliente_id>')
+@require_auth
 def particulares_cliente(cliente_id):
     hoy = datetime.now()
     anio = int(request.args.get('anio', hoy.year))
