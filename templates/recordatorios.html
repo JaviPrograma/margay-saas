@@ -54,7 +54,6 @@
         <label class="form-label mt-2">Plantilla</label>
         <textarea class="form-control" name="despa_template" rows="3">{{ (cfg['despa_template'] or '') if cfg else '' }}</textarea>
         <div class="row mt-2 g-2"><div class="col"><label class="form-label">Días antes</label><input type="number" min="1" max="60" class="form-control" name="despa_dias_antes" value="{{ cfg['despa_dias_antes'] if cfg else 7 }}"></div><div class="col"><label class="form-label">Hora</label><input type="time" class="form-control" name="despa_hora" value="{{ cfg['despa_hora'] if cfg else '10:00' }}"></div></div>
-        <div class="mt-2"><label class="form-label">Intervalo (días desde última desparasitación)</label><input type="number" min="1" max="365" class="form-control" name="despa_intervalo_dias" value="{{ cfg['despa_intervalo_dias'] if cfg else 90 }}"></div>
       </div>
     </div>
 
