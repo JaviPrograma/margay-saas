@@ -4,20 +4,25 @@ import sqlite3, threading, time, datetime as dt, os, smtplib, ssl
 from email.message import EmailMessage
 
 bp = Blueprint("recordatorios", __name__, url_prefix="/recordatorios")
-_db_env = os.environ.get("DATABASE_PATH")
-if _db_env:
-    DB_PATH = _db_env
-elif os.environ.get("RENDER") or os.environ.get("PORT"):
-    DB_PATH = "/tmp/veterinaria.db"
+_db_env = (os.environ.get("DATABASE_PATH") or "").strip()
+if os.environ.get("RENDER") or os.environ.get("PORT"):
+    if not _db_env or _db_env.startswith("/tmp/"):
+        DB_PATH = "/var/data/veterinaria.db"
+    else:
+        DB_PATH = _db_env
 else:
-    DB_PATH = "veterinaria.db"
+    DB_PATH = _db_env or "veterinaria.db"
 
-# En Render, si la base en /tmp no existe todavía, copiamos la incluida en el proyecto
-if DB_PATH.startswith("/tmp/") and not os.path.exists(DB_PATH):
+os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
+if not os.path.exists(DB_PATH):
+    _legacy_db = "/tmp/veterinaria.db"
     _seed_db = os.path.join(os.path.dirname(__file__), "veterinaria.db")
-    if os.path.exists(_seed_db):
+    if (os.environ.get("RENDER") or os.environ.get("PORT")) and os.path.exists(_legacy_db):
         import shutil
-        shutil.copy(_seed_db, DB_PATH)
+        shutil.copy2(_legacy_db, DB_PATH)
+    elif os.path.exists(_seed_db):
+        import shutil
+        shutil.copy2(_seed_db, DB_PATH)
 CLINICA = "VetCloud"
 BATCH_SIZE = 20
 PAUSA_ENTRE_ENVIOS = 0.6

@@ -9,4 +9,6 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_PATH
-        value: /tmp/veterinaria.db
+        value: /var/data/veterinaria.db
+      - key: UPLOAD_FOLDER
+        value: /var/data/uploads

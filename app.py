@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, redirect, url_for, abort, send_from_directory, jsonify, flash, session, g, send_file
 import sqlite3
-import os, re, sqlite3, shutil
+import os, re, sqlite3, shutil, zipfile
 from werkzeug.utils import secure_filename
 from datetime import datetime, timedelta, time, date, timezone
 from zoneinfo import ZoneInfo
@@ -15,28 +15,87 @@ app.secret_key = os.environ.get('SECRET_KEY', 'tu_clave_secreta_aqui')
 # --- Config generales ---
 CLINIC_NAME = "MARGAY"
 CLINIC_WHATSAPP_RETURN = "agenda_lista"  # adónde volver luego de abrir WhatsApp
-app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', '/var/data/uploads' if (os.environ.get('RENDER') or os.environ.get('PORT')) else 'static/uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
-# Base de datos: en Render conviene /tmp; en local usa veterinaria.db
-_database_env = os.environ.get('DATABASE_PATH')
-if _database_env:
-    DATABASE = _database_env
-elif os.environ.get('RENDER') or os.environ.get('PORT'):
-    DATABASE = '/tmp/veterinaria.db'
-else:
-    DATABASE = 'veterinaria.db'
 # Opcional: clave simple para el programador de tareas
 app.config.setdefault('TASK_SECRET', 'margay-task')
 
-# Si estamos en un entorno efímero (Render) y no existe la DB todavía,
-# copiamos la base incluida en el proyecto para arrancar con datos y esquema.
-if DATABASE.startswith('/tmp/') and not os.path.exists(DATABASE):
-    _seed_db = os.path.join(os.path.dirname(__file__), 'veterinaria.db')
-    if os.path.exists(_seed_db):
-        shutil.copy(_seed_db, DATABASE)
 
-if not os.path.exists(app.config['UPLOAD_FOLDER']):
-    os.makedirs(app.config['UPLOAD_FOLDER'])
+def _is_render_env():
+    return bool(os.environ.get('RENDER') or os.environ.get('PORT'))
+
+
+def _project_dir():
+    return os.path.dirname(__file__)
+
+
+def _seed_db_path():
+    return os.path.join(_project_dir(), 'veterinaria.db')
+
+
+def _legacy_tmp_db_path():
+    return '/tmp/veterinaria.db'
+
+
+def _legacy_tmp_uploads_dir():
+    return '/tmp/uploads'
+
+
+def _resolve_database_path():
+    env_path = (os.environ.get('DATABASE_PATH') or '').strip()
+    if _is_render_env():
+        if not env_path or env_path.startswith('/tmp/'):
+            return '/var/data/veterinaria.db'
+        return env_path
+    return env_path or 'veterinaria.db'
+
+
+def _resolve_upload_folder():
+    env_path = (os.environ.get('UPLOAD_FOLDER') or '').strip()
+    if _is_render_env():
+        if not env_path or env_path.startswith('/tmp/'):
+            return '/var/data/uploads'
+        return env_path
+    return env_path or 'static/uploads'
+
+
+DATABASE = _resolve_database_path()
+app.config['UPLOAD_FOLDER'] = _resolve_upload_folder()
+
+
+def _copy_tree_missing(src, dst):
+    if not os.path.isdir(src):
+        return
+    os.makedirs(dst, exist_ok=True)
+    for name in os.listdir(src):
+        src_path = os.path.join(src, name)
+        dst_path = os.path.join(dst, name)
+        if os.path.isdir(src_path):
+            _copy_tree_missing(src_path, dst_path)
+        elif os.path.isfile(src_path) and not os.path.exists(dst_path):
+            shutil.copy2(src_path, dst_path)
+
+
+def _ensure_persistent_storage():
+    db_path = os.path.abspath(DATABASE)
+    uploads_dir = os.path.abspath(app.config['UPLOAD_FOLDER'])
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    os.makedirs(uploads_dir, exist_ok=True)
+    os.makedirs(os.path.join(os.path.dirname(db_path), 'backups'), exist_ok=True)
+
+    if not os.path.exists(db_path):
+        legacy_db = _legacy_tmp_db_path()
+        seed_db = _seed_db_path()
+        if _is_render_env() and os.path.exists(legacy_db):
+            shutil.copy2(legacy_db, db_path)
+        elif os.path.exists(seed_db):
+            shutil.copy2(seed_db, db_path)
+
+    if _is_render_env():
+        _copy_tree_missing(_legacy_tmp_uploads_dir(), uploads_dir)
+        _copy_tree_missing(os.path.join(_project_dir(), 'static', 'uploads'), uploads_dir)
+
+
+_ensure_persistent_storage()
 
 PUBLIC_ENDPOINTS = {'login', 'setup_saas', 'static'}
 
@@ -86,23 +145,59 @@ def require_master_admin(view):
 
 
 
-def _crear_respaldo_db():
+def _backups_dir():
+    db_path = os.path.abspath(DATABASE)
+    backups_dir = os.path.join(os.path.dirname(db_path), 'backups')
+    os.makedirs(backups_dir, exist_ok=True)
+    return backups_dir
+
+
+def _ultimo_respaldo_info():
+    backups_dir = _backups_dir()
+    files = []
+    for name in os.listdir(backups_dir):
+        path = os.path.join(backups_dir, name)
+        if os.path.isfile(path):
+            files.append((os.path.getmtime(path), name))
+    if not files:
+        return 'Aún no hay respaldos generados.'
+    files.sort(reverse=True)
+    ts, name = files[0]
+    return f"{name} ({datetime.fromtimestamp(ts).strftime('%d/%m/%Y %H:%M:%S')})"
+
+
+def _crear_respaldo_total():
     db_path = os.path.abspath(DATABASE)
     if not os.path.exists(db_path):
         raise FileNotFoundError(f'No existe la base de datos actual: {db_path}')
-    backups_dir = os.path.join(os.path.dirname(db_path), 'backups')
-    os.makedirs(backups_dir, exist_ok=True)
+    uploads_dir = os.path.abspath(app.config['UPLOAD_FOLDER'])
+    backups_dir = _backups_dir()
     stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-    out_name = f'respaldo-veterinaria-{stamp}.db'
+    out_name = f'respaldo-total-vetcloud-{stamp}.zip'
     out_path = os.path.join(backups_dir, out_name)
-    shutil.copy2(db_path, out_path)
+    manifest_lines = [
+        f'Fecha: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+        f'Base activa: {db_path}',
+        f'Carpeta de archivos: {uploads_dir}',
+        'Contenido: base SQLite completa + archivos adjuntos guardados en uploads.',
+        ''
+    ]
+    with zipfile.ZipFile(out_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(db_path, arcname='db/veterinaria.db')
+        if os.path.isdir(uploads_dir):
+            for base, _, files in os.walk(uploads_dir):
+                for fname in files:
+                    full = os.path.join(base, fname)
+                    rel = os.path.relpath(full, uploads_dir)
+                    zf.write(full, arcname=os.path.join('uploads', rel))
+        zf.writestr('MANIFEST.txt', '\n'.join(manifest_lines))
     return out_path, out_name
 
 @app.route('/administrador/respaldo-db')
 @require_master_admin
 def administrador_respaldo_db():
     try:
-        out_path, out_name = _crear_respaldo_db()
+        out_path, out_name = _crear_respaldo_total()
         return send_file(out_path, as_attachment=True, download_name=out_name)
     except Exception as e:
         flash(f'No se pudo generar el respaldo: {e}', 'danger')
@@ -860,24 +955,7 @@ def veterinarias_panel():
             FROM empresas e
             ORDER BY e.id
         """).fetchall()
-        db_path = os.path.abspath(DATABASE)
-        backups_dir = os.path.join(os.path.dirname(db_path), 'backups')
-        ultimo_respaldo = None
-        if os.path.isdir(backups_dir):
-            candidatos = [os.path.join(backups_dir, n) for n in os.listdir(backups_dir) if n.lower().endswith('.db')]
-            if candidatos:
-                ultimo = max(candidatos, key=os.path.getmtime)
-                ultimo_respaldo = {
-                    'nombre': os.path.basename(ultimo),
-                    'fecha': datetime.fromtimestamp(os.path.getmtime(ultimo)).strftime('%d/%m/%Y %H:%M:%S')
-                }
-        return render_template(
-            'veterinarias.html',
-            empresas=empresas,
-            db_path=db_path,
-            backups_dir=backups_dir,
-            ultimo_respaldo=ultimo_respaldo,
-        )
+        return render_template('veterinarias.html', empresas=empresas, db_path=os.path.abspath(DATABASE), uploads_path=os.path.abspath(app.config['UPLOAD_FOLDER']), backups_path=_backups_dir(), ultimo_respaldo=_ultimo_respaldo_info())
     finally:
         conn.close()
 
@@ -982,7 +1060,7 @@ def administrador_panel():
             ORDER BY datetime(la.created_at) DESC
             LIMIT 20
         """).fetchall()
-        return render_template('administrador.html', resumen=resumen, kpis=kpis, ultimos=ultimos)
+        return render_template('administrador.html', resumen=resumen, kpis=kpis, ultimos=ultimos, db_path=os.path.abspath(DATABASE), uploads_path=os.path.abspath(app.config['UPLOAD_FOLDER']), backups_path=_backups_dir(), ultimo_respaldo=_ultimo_respaldo_info())
     finally:
         conn.close()
 
