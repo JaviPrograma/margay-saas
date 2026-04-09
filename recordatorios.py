@@ -29,10 +29,55 @@ PAUSA_ENTRE_ENVIOS = 0.6
 LAST_TICK = None
 
 
-def db_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+def db_conn(timeout=30):
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=timeout)
     conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
+    try:
+        conn.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
+    except Exception:
+        pass
     return conn
+
+
+def _is_locked_error(exc: Exception) -> bool:
+    return 'locked' in str(exc).lower()
+
+
+def _write_with_retry(work, attempts=8, pause=0.35):
+    last = None
+    for _ in range(attempts):
+        conn = None
+        try:
+            conn = db_conn(timeout=30)
+            result = work(conn)
+            conn.commit()
+            return result
+        except sqlite3.OperationalError as e:
+            last = e
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            if not _is_locked_error(e):
+                raise
+            time.sleep(pause)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    if last:
+        raise last
 
 
 def empresa_actual():
@@ -605,52 +650,51 @@ def config():
         'smtp_from_name': (f.get('smtp_from_name') or '').strip(),
         'test_email': (f.get('test_email') or '').strip(),
     }
-    conn = db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        INSERT INTO reminder_config (
-            empresa_id, mensual_enabled, mensual_template, mensual_hora, mensual_dia_mes,
-            vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
-            despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
-            part_enabled, part_template, part_hora, part_dia_mes,
-            smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
-        ) VALUES (
-            :empresa_id, :mensual_enabled, :mensual_template, :mensual_hora, :mensual_dia_mes,
-            :vacunas_enabled, :vacunas_template, :vacunas_hora, :vacunas_dias_antes,
-            :despa_enabled, :despa_template, :despa_hora, :despa_dias_antes, :despa_intervalo_dias,
-            :part_enabled, :part_template, :part_hora, :part_dia_mes,
-            :smtp_host, :smtp_port, :smtp_user, :smtp_pass, :smtp_tls, :smtp_ssl, :smtp_from, :smtp_from_name, :test_email
-        )
-        ON CONFLICT(empresa_id) DO UPDATE SET
-            mensual_enabled=excluded.mensual_enabled,
-            mensual_template=excluded.mensual_template,
-            mensual_hora=excluded.mensual_hora,
-            mensual_dia_mes=excluded.mensual_dia_mes,
-            vacunas_enabled=excluded.vacunas_enabled,
-            vacunas_template=excluded.vacunas_template,
-            vacunas_hora=excluded.vacunas_hora,
-            vacunas_dias_antes=excluded.vacunas_dias_antes,
-            despa_enabled=excluded.despa_enabled,
-            despa_template=excluded.despa_template,
-            despa_hora=excluded.despa_hora,
-            despa_dias_antes=excluded.despa_dias_antes,
-            despa_intervalo_dias=excluded.despa_intervalo_dias,
-            part_enabled=excluded.part_enabled,
-            part_template=excluded.part_template,
-            part_hora=excluded.part_hora,
-            part_dia_mes=excluded.part_dia_mes,
-            smtp_host=excluded.smtp_host,
-            smtp_port=excluded.smtp_port,
-            smtp_user=excluded.smtp_user,
-            smtp_pass=excluded.smtp_pass,
-            smtp_tls=excluded.smtp_tls,
-            smtp_ssl=excluded.smtp_ssl,
-            smtp_from=excluded.smtp_from,
-            smtp_from_name=excluded.smtp_from_name,
-            test_email=excluded.test_email
-    """, payload)
-    conn.commit()
-    conn.close()
+    def _work(conn):
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO reminder_config (
+                empresa_id, mensual_enabled, mensual_template, mensual_hora, mensual_dia_mes,
+                vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
+                despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
+                part_enabled, part_template, part_hora, part_dia_mes,
+                smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
+            ) VALUES (
+                :empresa_id, :mensual_enabled, :mensual_template, :mensual_hora, :mensual_dia_mes,
+                :vacunas_enabled, :vacunas_template, :vacunas_hora, :vacunas_dias_antes,
+                :despa_enabled, :despa_template, :despa_hora, :despa_dias_antes, :despa_intervalo_dias,
+                :part_enabled, :part_template, :part_hora, :part_dia_mes,
+                :smtp_host, :smtp_port, :smtp_user, :smtp_pass, :smtp_tls, :smtp_ssl, :smtp_from, :smtp_from_name, :test_email
+            )
+            ON CONFLICT(empresa_id) DO UPDATE SET
+                mensual_enabled=excluded.mensual_enabled,
+                mensual_template=excluded.mensual_template,
+                mensual_hora=excluded.mensual_hora,
+                mensual_dia_mes=excluded.mensual_dia_mes,
+                vacunas_enabled=excluded.vacunas_enabled,
+                vacunas_template=excluded.vacunas_template,
+                vacunas_hora=excluded.vacunas_hora,
+                vacunas_dias_antes=excluded.vacunas_dias_antes,
+                despa_enabled=excluded.despa_enabled,
+                despa_template=excluded.despa_template,
+                despa_hora=excluded.despa_hora,
+                despa_dias_antes=excluded.despa_dias_antes,
+                despa_intervalo_dias=excluded.despa_intervalo_dias,
+                part_enabled=excluded.part_enabled,
+                part_template=excluded.part_template,
+                part_hora=excluded.part_hora,
+                part_dia_mes=excluded.part_dia_mes,
+                smtp_host=excluded.smtp_host,
+                smtp_port=excluded.smtp_port,
+                smtp_user=excluded.smtp_user,
+                smtp_pass=excluded.smtp_pass,
+                smtp_tls=excluded.smtp_tls,
+                smtp_ssl=excluded.smtp_ssl,
+                smtp_from=excluded.smtp_from,
+                smtp_from_name=excluded.smtp_from_name,
+                test_email=excluded.test_email
+        """, payload)
+    _write_with_retry(_work)
     flash('Configuración guardada.', 'success')
     return redirect(url_for('recordatorios.dashboard'))
 
@@ -687,38 +731,26 @@ def smtp_test():
         flash('Ingresá un email de prueba o un remitente válido.', 'danger')
         return redirect(url_for('recordatorios.dashboard'))
 
-    conn = db_conn()
-    conn.execute("""
-        INSERT INTO reminder_config (empresa_id, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email)
-        VALUES (:empresa_id, :smtp_host, :smtp_port, :smtp_user, :smtp_pass, :smtp_tls, :smtp_ssl, :smtp_from, :smtp_from_name, :test_email)
-        ON CONFLICT(empresa_id) DO UPDATE SET
-            smtp_host=excluded.smtp_host,
-            smtp_port=excluded.smtp_port,
-            smtp_user=excluded.smtp_user,
-            smtp_pass=excluded.smtp_pass,
-            smtp_tls=excluded.smtp_tls,
-            smtp_ssl=excluded.smtp_ssl,
-            smtp_from=excluded.smtp_from,
-            smtp_from_name=excluded.smtp_from_name,
-            test_email=excluded.test_email
-    """, {**cfg, 'test_email': test_email})
-    conn.commit()
-    conn.close()
-
     try:
-        _smtp_send(cfg, test_email, 'Prueba SMTP VetCloud', 'Esta es una prueba de configuración SMTP desde VetCloud.')
-        flash(f'Prueba SMTP exitosa. Se envió un correo a {test_email}.', 'success')
-    except Exception as e:
-        flash(f'Error SMTP: {e}', 'danger')
-    return redirect(url_for('recordatorios.dashboard'))
-
-    try:
-        conn = db_conn()
-        conn.execute("UPDATE reminder_config SET test_email=? WHERE empresa_id=?", (test_email, emp))
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
+        def _work(conn):
+            conn.execute("""
+                INSERT INTO reminder_config (empresa_id, smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email)
+                VALUES (:empresa_id, :smtp_host, :smtp_port, :smtp_user, :smtp_pass, :smtp_tls, :smtp_ssl, :smtp_from, :smtp_from_name, :test_email)
+                ON CONFLICT(empresa_id) DO UPDATE SET
+                    smtp_host=excluded.smtp_host,
+                    smtp_port=excluded.smtp_port,
+                    smtp_user=excluded.smtp_user,
+                    smtp_pass=excluded.smtp_pass,
+                    smtp_tls=excluded.smtp_tls,
+                    smtp_ssl=excluded.smtp_ssl,
+                    smtp_from=excluded.smtp_from,
+                    smtp_from_name=excluded.smtp_from_name,
+                    test_email=excluded.test_email
+            """, {**cfg, 'test_email': test_email})
+        _write_with_retry(_work)
+    except sqlite3.OperationalError as e:
+        flash(f'No se pudo guardar la configuración SMTP porque la base estaba ocupada: {e}', 'danger')
+        return redirect(url_for('recordatorios.dashboard'))
 
     try:
         _smtp_send(cfg, test_email, 'Prueba SMTP VetCloud', 'Esta es una prueba de configuración SMTP desde VetCloud.')
