@@ -6,6 +6,23 @@
     <h2 class="mb-1">Veterinarias</h2>
     <p class="text-muted mb-0">Alta, control y administración del SaaS.</p>
   </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a href="{{ url_for('administrador_respaldo_db') }}" class="btn btn-success fw-semibold">
+      Descargar respaldo
+    </a>
+  </div>
+</div>
+
+<div class="alert alert-light border shadow-sm mb-4">
+  <div><strong>Base activa:</strong> <code>{{ db_path }}</code></div>
+  <div><strong>Carpeta de respaldos:</strong> <code>{{ backups_dir }}</code></div>
+  <div><strong>Último respaldo:</strong>
+    {% if ultimo_respaldo %}
+      {{ ultimo_respaldo.nombre }} — {{ ultimo_respaldo.fecha }}
+    {% else %}
+      Aún no hay respaldos generados.
+    {% endif %}
+  </div>
 </div>
 
 <div class="row g-4">
