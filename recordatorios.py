@@ -400,9 +400,7 @@ def _gen_despa_auto(conn, empresa_id, today, cfg):
         WHERE d.empresa_id=? AND c.empresa_id=? AND DATE(d.fecha_vencimiento)=DATE(?) AND COALESCE(c.email,'')<>''
         ORDER BY c.nombre, a.nombre, d.id DESC
     """, (empresa_id, empresa_id, objetivo.strftime('%Y-%m-%d'))).fetchall()
-    tpl = cfg['despa_template'] or "Hola {CLIENTE}, estas desparasitaciones están próximas a vencer:
-
-{LISTADO}"
+    tpl = cfg['despa_template'] or "Hola {CLIENTE}, estas desparasitaciones están próximas a vencer:\n\n{LISTADO}"
     for r in filas:
         referencia = r['fecha_vencimiento']
         asunto = f"{clinica} - Desparasitación próxima a vencer"

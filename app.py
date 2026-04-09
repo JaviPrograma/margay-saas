@@ -1886,12 +1886,12 @@ def atender_cita(cita_id):
                d.nombre  AS doctor_nombre,
                m.nombre  AS motivo_nombre, m.tipo AS motivo_tipo, m.genera_historia AS motivo_genera_historia
           FROM agenda a
-          JOIN clientes c ON c.id = a.cliente_id
-          JOIN animales an ON an.id = a.animal_id
-          JOIN doctores d ON d.id = a.doctor_id
-          LEFT JOIN motivos m ON m.id = a.motivo_id
-         WHERE a.id = ?
-        """, (cita_id,)
+          JOIN clientes c ON c.id = a.cliente_id AND c.empresa_id = a.empresa_id
+          JOIN animales an ON an.id = a.animal_id AND an.empresa_id = a.empresa_id
+          JOIN doctores d ON d.id = a.doctor_id AND d.empresa_id = a.empresa_id
+          LEFT JOIN motivos m ON m.id = a.motivo_id AND m.empresa_id = a.empresa_id
+         WHERE a.id = ? AND a.empresa_id = ?
+        """, (cita_id, current_empresa_id())
     ).fetchone()
     if not cita:
         conn.close()
@@ -1991,16 +1991,16 @@ def atender_cita(cita_id):
 def whatsapp_web_cita(cita_id):
     conn = get_db()
     cur = conn.cursor()
-    cita = cur.execute("SELECT * FROM agenda WHERE id=?", (cita_id,)).fetchone()
+    cita = cur.execute("SELECT * FROM agenda WHERE id=? AND empresa_id=?", (cita_id, current_empresa_id())).fetchone()
     if not cita:
         conn.close()
         flash("Cita no encontrada para WhatsApp.", "danger")
         return redirect(url_for(CLINIC_WHATSAPP_RETURN))
 
-    cli = cur.execute("SELECT * FROM clientes WHERE id=?", (cita['cliente_id'],)).fetchone()
-    ani = cur.execute("SELECT * FROM animales WHERE id=?", (cita['animal_id'],)).fetchone()
-    doc = cur.execute("SELECT * FROM doctores WHERE id=?", (cita['doctor_id'],)).fetchone()
-    mot = cur.execute("SELECT * FROM motivos WHERE id=?", (cita['motivo_id'],)).fetchone()
+    cli = cur.execute("SELECT * FROM clientes WHERE id=? AND empresa_id=?", (cita['cliente_id'], current_empresa_id())).fetchone()
+    ani = cur.execute("SELECT * FROM animales WHERE id=? AND empresa_id=?", (cita['animal_id'], current_empresa_id())).fetchone()
+    doc = cur.execute("SELECT * FROM doctores WHERE id=? AND empresa_id=?", (cita['doctor_id'], current_empresa_id())).fetchone()
+    mot = cur.execute("SELECT * FROM motivos WHERE id=? AND empresa_id=?", (cita['motivo_id'], current_empresa_id())).fetchone()
     conn.close()
 
     phone_digits = _uy_to_e164_digits(cli['telefono'] if cli else "")
