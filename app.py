@@ -363,6 +363,10 @@ def _to_float(v):
     except Exception:
         return None
 
+def _normalizar_cedula(v):
+    return re.sub(r"\D", "", (v or "").strip())
+
+
 def _primer_y_ultimo_dia(anio:int, mes:int):
     inicio = datetime(anio, mes, 1)
     fin = (datetime(anio+1,1,1) - timedelta(days=1)) if mes==12 else (datetime(anio, mes+1, 1) - timedelta(days=1))
@@ -611,13 +615,41 @@ def init_db():
         try: cur.execute(alter)
         except Exception: pass
 
-    # Índice único para cédula no vacía
+    # Cédula normalizada por empresa (evita choques entre veterinarias y formatos)
     try:
-        cur.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_clientes_cedula_unique
-            ON clientes(cedula)
-            WHERE cedula IS NOT NULL AND cedula <> ''
-        """)
+        cur.execute("ALTER TABLE clientes ADD COLUMN cedula_normalizada TEXT")
+    except Exception:
+        pass
+
+    try:
+        cur.execute("DROP INDEX IF EXISTS idx_clientes_cedula_unique")
+    except Exception:
+        pass
+
+    try:
+        rows = cur.execute("SELECT id, cedula FROM clientes").fetchall()
+        for r in rows:
+            ced_norm = _normalizar_cedula(r['cedula'] if isinstance(r, sqlite3.Row) else r[1])
+            rid = r['id'] if isinstance(r, sqlite3.Row) else r[0]
+            cur.execute("UPDATE clientes SET cedula_normalizada=? WHERE id=?", (ced_norm or None, rid))
+    except Exception:
+        pass
+
+    try:
+        dups = cur.execute("""
+            SELECT empresa_id, cedula_normalizada, COUNT(1) c
+            FROM clientes
+            WHERE COALESCE(cedula_normalizada,'') <> ''
+            GROUP BY empresa_id, cedula_normalizada
+            HAVING COUNT(1) > 1
+            LIMIT 1
+        """).fetchone()
+        if not dups:
+            cur.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_clientes_empresa_cedula_norm_unique
+                ON clientes(empresa_id, cedula_normalizada)
+                WHERE cedula_normalizada IS NOT NULL AND cedula_normalizada <> ''
+            """)
     except Exception:
         pass
 
@@ -1355,6 +1387,7 @@ def cliente_nuevo():
     nombre = request.form.get("nombre", "").strip()
     telefono = request.form.get("telefono", "").strip()
     cedula = (request.form.get("cedula", "") or "").strip()
+    cedula_norm = _normalizar_cedula(cedula)
     tipo = request.form.get("tipo", "Particular").strip()
     direccion = request.form.get("direccion", "").strip()
     email = (request.form.get("email", "") or "").strip().lower()
@@ -1362,8 +1395,8 @@ def cliente_nuevo():
 
     conn = get_db()
 
-    if cedula:
-        dup = conn.execute("SELECT id FROM clientes WHERE cedula = ? AND empresa_id=?", (cedula, current_empresa_id())).fetchone()
+    if cedula_norm:
+        dup = conn.execute("SELECT id FROM clientes WHERE cedula_normalizada = ? AND empresa_id=?", (cedula_norm, current_empresa_id())).fetchone()
         if dup:
             conn.close()
             flash("Ya existe un cliente con esa cédula.", "danger")
@@ -1372,9 +1405,9 @@ def cliente_nuevo():
     try:
         fecha_af = datetime.now().strftime("%Y-%m-%d") if tipo == "Mensual" else None
         conn.execute(
-            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, empresa_id)
-               VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?)""",
-            (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, current_empresa_id()),
+            """INSERT INTO clientes (nombre, telefono, cedula, cedula_normalizada, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, empresa_id)
+               VALUES (?, ?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?)""",
+            (nombre, telefono, cedula, cedula_norm or None, tipo, direccion, email, cuota_mensual, fecha_af, current_empresa_id()),
         )
         cliente_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()['id']
 
@@ -1402,6 +1435,7 @@ def cliente_editar(id):
         nombre = request.form.get("nombre", "").strip()
         telefono = request.form.get("telefono", "").strip()
         cedula = (request.form.get("cedula", "") or "").strip()
+        cedula_norm = _normalizar_cedula(cedula)
         tipo = request.form.get("tipo", "Particular").strip()
         direccion = request.form.get("direccion", "").strip()
         email = (request.form.get("email", "") or "").strip().lower()
@@ -1410,8 +1444,8 @@ def cliente_editar(id):
         prev = conn.execute("SELECT tipo FROM clientes WHERE id=? AND empresa_id=?", (id, current_empresa_id())).fetchone()
         prev_tipo = prev['tipo'] if prev else None
 
-        if cedula:
-            dup = conn.execute("SELECT id FROM clientes WHERE cedula = ? AND id <> ? AND empresa_id=?", (cedula, id, current_empresa_id())).fetchone()
+        if cedula_norm:
+            dup = conn.execute("SELECT id FROM clientes WHERE cedula_normalizada = ? AND id <> ? AND empresa_id=?", (cedula_norm, id, current_empresa_id())).fetchone()
             if dup:
                 conn.close()
                 flash("Ya existe otro cliente con esa cédula.", "danger")
@@ -1424,9 +1458,9 @@ def cliente_editar(id):
 
             conn.execute(
                 """UPDATE clientes
-                   SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
-                   WHERE id=?""",
-                (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, id),
+                   SET nombre=?, telefono=?, cedula=?, cedula_normalizada=?, tipo=?, direccion=?, email=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
+                   WHERE id=? AND empresa_id=?""",
+                (nombre, telefono, cedula, cedula_norm or None, tipo, direccion, email, cuota_mensual, fecha_af, id, current_empresa_id()),
             )
 
             if prev_tipo != "Mensual" and tipo == "Mensual":
