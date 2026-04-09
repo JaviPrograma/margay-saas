@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, abort, send_from_directory, jsonify, flash, session, g
+from flask import Flask, render_template, request, redirect, url_for, abort, send_from_directory, jsonify, flash, session, g, send_file
 import sqlite3
 import os, re, sqlite3, shutil
 from werkzeug.utils import secure_filename
@@ -83,6 +83,30 @@ def require_master_admin(view):
         return view(*args, **kwargs)
     return wrapped
 
+
+
+
+def _crear_respaldo_db():
+    db_path = os.path.abspath(DATABASE)
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f'No existe la base de datos actual: {db_path}')
+    backups_dir = os.path.join(os.path.dirname(db_path), 'backups')
+    os.makedirs(backups_dir, exist_ok=True)
+    stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    out_name = f'respaldo-veterinaria-{stamp}.db'
+    out_path = os.path.join(backups_dir, out_name)
+    shutil.copy2(db_path, out_path)
+    return out_path, out_name
+
+@app.route('/administrador/respaldo-db')
+@require_master_admin
+def administrador_respaldo_db():
+    try:
+        out_path, out_name = _crear_respaldo_db()
+        return send_file(out_path, as_attachment=True, download_name=out_name)
+    except Exception as e:
+        flash(f'No se pudo generar el respaldo: {e}', 'danger')
+        return redirect(url_for('administrador_panel'))
 
 def require_auth(view):
     @wraps(view)
