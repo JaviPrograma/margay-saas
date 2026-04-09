@@ -17,23 +17,34 @@ CLINIC_NAME = "MARGAY"
 CLINIC_WHATSAPP_RETURN = "agenda_lista"  # adónde volver luego de abrir WhatsApp
 app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', '/var/data/uploads' if (os.environ.get('RENDER') or os.environ.get('PORT')) else 'static/uploads')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
-# Base de datos: en Render conviene /tmp; en local usa veterinaria.db
+# Base de datos: en Render usar disco persistente; en local usa veterinaria.db
 _database_env = os.environ.get('DATABASE_PATH')
 if _database_env:
     DATABASE = _database_env
 elif os.environ.get('RENDER') or os.environ.get('PORT'):
-    DATABASE = '/tmp/veterinaria.db'
+    DATABASE = '/var/data/veterinaria.db'
 else:
     DATABASE = 'veterinaria.db'
 # Opcional: clave simple para el programador de tareas
 app.config.setdefault('TASK_SECRET', 'margay-task')
 
-# Si estamos en un entorno efímero (Render) y no existe la DB todavía,
-# copiamos la base incluida en el proyecto para arrancar con datos y esquema.
-if DATABASE.startswith('/tmp/') and not os.path.exists(DATABASE):
-    _seed_db = os.path.join(os.path.dirname(__file__), 'veterinaria.db')
-    if os.path.exists(_seed_db):
-        shutil.copy(_seed_db, DATABASE)
+
+def _asegurar_db_inicial():
+    db_path = os.path.abspath(DATABASE)
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    if os.path.exists(db_path):
+        return
+    candidatos = []
+    legacy_tmp = '/tmp/veterinaria.db'
+    if db_path != legacy_tmp:
+        candidatos.append(legacy_tmp)
+    candidatos.append(os.path.join(os.path.dirname(__file__), 'veterinaria.db'))
+    for origen in candidatos:
+        if origen and os.path.exists(origen):
+            shutil.copy2(origen, db_path)
+            return
+
+_asegurar_db_inicial()
 
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
@@ -97,6 +108,25 @@ def _crear_respaldo_db():
     out_path = os.path.join(backups_dir, out_name)
     shutil.copy2(db_path, out_path)
     return out_path, out_name
+
+
+def _info_respaldo_db():
+    db_path = os.path.abspath(DATABASE)
+    backups_dir = os.path.join(os.path.dirname(db_path), 'backups')
+    ultimo = None
+    if os.path.isdir(backups_dir):
+        archivos = [os.path.join(backups_dir, n) for n in os.listdir(backups_dir) if n.lower().endswith('.db')]
+        if archivos:
+            ultimo_archivo = max(archivos, key=lambda x: os.path.getmtime(x))
+            ultimo = {
+                'nombre': os.path.basename(ultimo_archivo),
+                'fecha': datetime.fromtimestamp(os.path.getmtime(ultimo_archivo)).strftime('%Y-%m-%d %H:%M:%S')
+            }
+    return {
+        'db_path': db_path,
+        'backups_dir': backups_dir,
+        'ultimo': ultimo,
+    }
 
 @app.route('/administrador/respaldo-db')
 @require_master_admin
@@ -860,7 +890,8 @@ def veterinarias_panel():
             FROM empresas e
             ORDER BY e.id
         """).fetchall()
-        return render_template('veterinarias.html', empresas=empresas)
+        info_respaldo = _info_respaldo_db()
+        return render_template('veterinarias.html', empresas=empresas, info_respaldo=info_respaldo)
     finally:
         conn.close()
 
@@ -965,7 +996,7 @@ def administrador_panel():
             ORDER BY datetime(la.created_at) DESC
             LIMIT 20
         """).fetchall()
-        return render_template('administrador.html', resumen=resumen, kpis=kpis, ultimos=ultimos)
+        return render_template('administrador.html', resumen=resumen, kpis=kpis, ultimos=ultimos, info_respaldo=_info_respaldo_db())
     finally:
         conn.close()
 
