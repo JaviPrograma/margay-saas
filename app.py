@@ -591,33 +591,42 @@ def _cuota_cliente(conn, cliente_row) -> float:
         return float(cliente_row['cuota_mensual'])
     return _calc_cuota_automatica(conn, cliente_row['id'])
 
-def _actualizar_flag_deudor(conn, cliente_id: int):
+def _actualizar_flag_deudor(conn, cliente_id: int, empresa_id: int | None = None):
     cur = conn.cursor()
+    empresa_id = empresa_id or current_empresa_id_resolved(conn)
+    if not empresa_id:
+        row = cur.execute("SELECT empresa_id FROM clientes WHERE id=?", (cliente_id,)).fetchone()
+        empresa_id = row['empresa_id'] if row and row['empresa_id'] else None
+    if not empresa_id:
+        return
+
     imp_mens = cur.execute(
-        "SELECT COUNT(1) c FROM mensualidades WHERE cliente_id=? AND pagado=0",
-        (cliente_id,)
+        "SELECT COUNT(1) c FROM mensualidades WHERE cliente_id=? AND empresa_id=? AND pagado=0",
+        (cliente_id, empresa_id)
     ).fetchone()['c'] or 0
 
     imp_mat = cur.execute(
-        "SELECT COUNT(1) c FROM matriculas WHERE cliente_id=? AND pagado=0",
-        (cliente_id,)
+        "SELECT COUNT(1) c FROM matriculas WHERE cliente_id=? AND empresa_id=? AND pagado=0",
+        (cliente_id, empresa_id)
     ).fetchone()['c'] or 0
 
     imp_citas = cur.execute("""
         SELECT COUNT(1) c
         FROM agenda a
-        LEFT JOIN mensualidades me ON me.id = a.cobrada_mensualidad_id
+        LEFT JOIN mensualidades me ON me.id = a.cobrada_mensualidad_id AND me.empresa_id = a.empresa_id
         WHERE a.cliente_id=?
+          AND a.empresa_id=?
           AND a.estado_pago='Debe'
           AND (a.cobrada_mensualidad_id IS NULL OR me.pagado=0)
-    """, (cliente_id,)).fetchone()['c'] or 0
+    """, (cliente_id, empresa_id)).fetchone()['c'] or 0
 
     deudor = 1 if (imp_mens > 0 or imp_mat > 0 or imp_citas > 0) else 0
-    cur.execute("UPDATE clientes SET deudor=? WHERE id=?", (deudor, cliente_id))
+    cur.execute("UPDATE clientes SET deudor=? WHERE id=? AND empresa_id=?", (deudor, cliente_id, empresa_id))
 
-def _precio_cita_calculado(conn, cliente_id:int, motivo_id:int, fecha:str, hora:str, lugar:str) -> float:
-    cl = conn.execute("SELECT tipo FROM clientes WHERE id=?", (cliente_id,)).fetchone()
-    mo = conn.execute("SELECT precio_mensual, precio_particular, tipo FROM motivos WHERE id=?", (motivo_id,)).fetchone()
+def _precio_cita_calculado(conn, cliente_id:int, motivo_id:int, fecha:str, hora:str, lugar:str, empresa_id: int | None = None) -> float:
+    empresa_id = empresa_id or current_empresa_id_resolved(conn)
+    cl = conn.execute("SELECT tipo FROM clientes WHERE id=? AND empresa_id=?", (cliente_id, empresa_id)).fetchone()
+    mo = conn.execute("SELECT precio_mensual, precio_particular, tipo FROM motivos WHERE id=? AND empresa_id=?", (motivo_id, empresa_id)).fetchone()
     if not cl or not mo:
         return None
 
@@ -1238,10 +1247,10 @@ def cliente_nuevo():
 
         if tipo == "Mensual":
             conn.execute(
-                "INSERT INTO matriculas (cliente_id, fecha, monto, pagado) VALUES (?, ?, ?, 0)",
-                (cliente_id, datetime.now().strftime("%Y-%m-%d"), 200.0)
+                "INSERT INTO matriculas (cliente_id, fecha, monto, pagado, empresa_id) VALUES (?, ?, ?, 0, ?)",
+                (cliente_id, datetime.now().strftime("%Y-%m-%d"), 200.0, current_empresa_id())
             )
-            _actualizar_flag_deudor(conn, cliente_id)
+            _actualizar_flag_deudor(conn, cliente_id, current_empresa_id())
 
         conn.commit()
     except sqlite3.IntegrityError:
@@ -1283,18 +1292,18 @@ def cliente_editar(id):
             conn.execute(
                 """UPDATE clientes
                    SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
-                   WHERE id=?""",
-                (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, id),
+                   WHERE id=? AND empresa_id=?""",
+                (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, id, current_empresa_id()),
             )
 
             if prev_tipo != "Mensual" and tipo == "Mensual":
-                existe_pend = conn.execute("SELECT 1 FROM matriculas WHERE cliente_id=? AND pagado=0", (id,)).fetchone()
+                existe_pend = conn.execute("SELECT 1 FROM matriculas WHERE cliente_id=? AND empresa_id=? AND pagado=0", (id, current_empresa_id())).fetchone()
                 if not existe_pend:
                     conn.execute(
-                        "INSERT INTO matriculas (cliente_id, fecha, monto, pagado) VALUES (?, ?, ?, 0)",
-                        (id, datetime.now().strftime("%Y-%m-%d"), 200.0)
+                        "INSERT INTO matriculas (cliente_id, fecha, monto, pagado, empresa_id) VALUES (?, ?, ?, 0, ?)",
+                        (id, datetime.now().strftime("%Y-%m-%d"), 200.0, current_empresa_id())
                     )
-                _actualizar_flag_deudor(conn, id)
+                _actualizar_flag_deudor(conn, id, current_empresa_id())
 
             conn.commit()
         except sqlite3.IntegrityError:
@@ -1344,12 +1353,13 @@ def cliente_reactivar(id):
 def matricula_pagar(cliente_id):
     conn = get_db()
     cur = conn.cursor()
+    empresa_id = current_empresa_id_resolved(conn)
     cur.execute("""
         UPDATE matriculas
         SET pagado=1, fecha_pago=?
-        WHERE cliente_id=? AND pagado=0
-    """, (datetime.now().strftime("%Y-%m-%d %H:%M"), cliente_id))
-    _actualizar_flag_deudor(conn, cliente_id)
+        WHERE cliente_id=? AND empresa_id=? AND pagado=0
+    """, (datetime.now().strftime("%Y-%m-%d %H:%M"), cliente_id, empresa_id))
+    _actualizar_flag_deudor(conn, cliente_id, empresa_id)
     conn.commit()
     conn.close()
     flash("Matrícula cobrada.", "success")
@@ -1683,7 +1693,7 @@ def agenda_nueva():
 
         conn = get_db()
         cur = conn.cursor()
-        motivo = cur.execute("SELECT duracion_minutos FROM motivos WHERE id=?", (motivo_id,)).fetchone()
+        motivo = cur.execute("SELECT duracion_minutos FROM motivos WHERE id=? AND empresa_id=?", (motivo_id, current_empresa_id())).fetchone()
         if motivo is None:
             conn.close()
             flash("Motivo no válido", "danger")
@@ -1701,9 +1711,9 @@ def agenda_nueva():
         citas = cur.execute("""
             SELECT a.hora, m.duracion_minutos
             FROM agenda a
-            JOIN motivos m ON a.motivo_id = m.id
-            WHERE a.fecha = ? AND a.doctor_id = ? AND a.atendida=0
-        """, (fecha, doctor_id)).fetchall()
+            JOIN motivos m ON a.motivo_id = m.id AND m.empresa_id = a.empresa_id
+            WHERE a.fecha = ? AND a.doctor_id = ? AND a.atendida=0 AND a.empresa_id = ?
+        """, (fecha, doctor_id, current_empresa_id())).fetchall()
 
         for c in citas:
             inicio_cita = datetime.strptime(f"{fecha} {c['hora']}", "%Y-%m-%d %H:%M")
@@ -1838,13 +1848,14 @@ def agenda_actualizar_estado_pago(cita_id):
     conn = get_db()
     cur = conn.cursor()
 
-    row = cur.execute("SELECT cliente_id FROM agenda WHERE id=?", (cita_id,)).fetchone()
+    empresa_id = current_empresa_id_resolved(conn)
+    row = cur.execute("SELECT cliente_id FROM agenda WHERE id=? AND empresa_id=?", (cita_id, empresa_id)).fetchone()
     if not row:
         conn.close()
         return jsonify({"success": False, "error": "Cita no encontrada"}), 404
 
-    cur.execute("UPDATE agenda SET estado_pago=? WHERE id=?", (nuevo_estado, cita_id))
-    _actualizar_flag_deudor(conn, row['cliente_id'])
+    cur.execute("UPDATE agenda SET estado_pago=? WHERE id=? AND empresa_id=?", (nuevo_estado, cita_id, empresa_id))
+    _actualizar_flag_deudor(conn, row['cliente_id'], empresa_id)
 
     conn.commit()
     conn.close()
@@ -1867,8 +1878,8 @@ def atender_cita(cita_id):
           JOIN animales an ON an.id = a.animal_id
           JOIN doctores d ON d.id = a.doctor_id
           LEFT JOIN motivos m ON m.id = a.motivo_id
-         WHERE a.id = ?
-        """, (cita_id,)
+         WHERE a.id = ? AND a.empresa_id = ?
+        """, (cita_id, current_empresa_id())
     ).fetchone()
     if not cita:
         conn.close()
@@ -1881,7 +1892,7 @@ def atender_cita(cita_id):
         genera_historia = 0
 
     if request.method == "GET" and not genera_historia:
-        cur.execute("UPDATE agenda SET atendida=1 WHERE id=?", (cita_id,))
+        cur.execute("UPDATE agenda SET atendida=1 WHERE id=? AND empresa_id=?", (cita_id, current_empresa_id()))
         conn.commit()
         conn.close()
         flash("La cita fue marcada como atendida. Este motivo no genera historia clínica.", "success")
@@ -1954,7 +1965,7 @@ def atender_cita(cita_id):
                     )
 
         # Marcar cita como atendida
-        cur.execute("UPDATE agenda SET atendida=1 WHERE id=?", (cita_id,))
+        cur.execute("UPDATE agenda SET atendida=1 WHERE id=? AND empresa_id=?", (cita_id, current_empresa_id()))
         conn.commit()
         conn.close()
         flash("Historia clínica registrada. La cita fue marcada como atendida.", "success")
@@ -1968,16 +1979,17 @@ def atender_cita(cita_id):
 def whatsapp_web_cita(cita_id):
     conn = get_db()
     cur = conn.cursor()
-    cita = cur.execute("SELECT * FROM agenda WHERE id=?", (cita_id,)).fetchone()
+    empresa_id = current_empresa_id_resolved(conn)
+    cita = cur.execute("SELECT * FROM agenda WHERE id=? AND empresa_id=?", (cita_id, empresa_id)).fetchone()
     if not cita:
         conn.close()
         flash("Cita no encontrada para WhatsApp.", "danger")
         return redirect(url_for(CLINIC_WHATSAPP_RETURN))
 
-    cli = cur.execute("SELECT * FROM clientes WHERE id=?", (cita['cliente_id'],)).fetchone()
-    ani = cur.execute("SELECT * FROM animales WHERE id=?", (cita['animal_id'],)).fetchone()
-    doc = cur.execute("SELECT * FROM doctores WHERE id=?", (cita['doctor_id'],)).fetchone()
-    mot = cur.execute("SELECT * FROM motivos WHERE id=?", (cita['motivo_id'],)).fetchone()
+    cli = cur.execute("SELECT * FROM clientes WHERE id=? AND empresa_id=?", (cita['cliente_id'], empresa_id)).fetchone()
+    ani = cur.execute("SELECT * FROM animales WHERE id=? AND empresa_id=?", (cita['animal_id'], empresa_id)).fetchone()
+    doc = cur.execute("SELECT * FROM doctores WHERE id=? AND empresa_id=?", (cita['doctor_id'], empresa_id)).fetchone()
+    mot = cur.execute("SELECT * FROM motivos WHERE id=? AND empresa_id=?", (cita['motivo_id'], empresa_id)).fetchone()
     conn.close()
 
     phone_digits = _uy_to_e164_digits(cli['telefono'] if cli else "")
@@ -2021,6 +2033,17 @@ def _sanear_facturacion_empresa(conn, empresa_id=None):
 
     conn.execute(
         """
+        DELETE FROM matriculas
+         WHERE empresa_id = ?
+           AND cliente_id NOT IN (
+               SELECT id FROM clientes WHERE empresa_id = ?
+           )
+        """,
+        (empresa_id, empresa_id),
+    )
+
+    conn.execute(
+        """
         UPDATE agenda
            SET cobrada_mensualidad_id = NULL
          WHERE empresa_id = ?
@@ -2047,6 +2070,7 @@ def mensualidades():
     cur = conn.cursor()
 
     _normalizar_mensualidades_empresa(conn, empresa_id)
+    _sanear_facturacion_empresa(conn, empresa_id)
 
     mensuales = cur.execute(
         "SELECT id, cuota_mensual FROM clientes WHERE tipo='Mensual' AND activo=1 AND empresa_id=?",
