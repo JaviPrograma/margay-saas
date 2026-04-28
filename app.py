@@ -455,6 +455,7 @@ def init_db():
     CREATE TABLE IF NOT EXISTS vacunas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         animal_id INTEGER NOT NULL,
+        tipo TEXT,
         fecha_vacuna TEXT NOT NULL,
         fecha_vencimiento TEXT NOT NULL,
         FOREIGN KEY(animal_id) REFERENCES animales(id)
@@ -651,6 +652,7 @@ def init_db():
         "ALTER TABLE animales ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE historia_clinica ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE vacunas ADD COLUMN empresa_id INTEGER DEFAULT 1",
+        "ALTER TABLE vacunas ADD COLUMN tipo TEXT",
         "ALTER TABLE desparasitaciones ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE motivos ADD COLUMN empresa_id INTEGER DEFAULT 1",
         "ALTER TABLE agenda ADD COLUMN empresa_id INTEGER DEFAULT 1",
@@ -1665,19 +1667,35 @@ def vacunas(animal_id):
     if animal is None:
         conn.close()
         abort(404)
-    vacunas = conn.execute("SELECT * FROM vacunas WHERE animal_id=? AND empresa_id=?", (animal_id, current_empresa_id())).fetchall()
+    vacunas = conn.execute(
+        "SELECT * FROM vacunas WHERE animal_id=? AND empresa_id=? ORDER BY fecha_vacuna DESC, id DESC",
+        (animal_id, current_empresa_id())
+    ).fetchall()
     conn.close()
     return render_template("vacunas.html", animal=animal, vacunas=vacunas)
 
 @app.route("/vacunas/nuevo/<int:animal_id>", methods=["POST"])
 def vacuna_nueva(animal_id):
+    tipo = request.form.get("tipo", "").strip()
     fecha_vacuna = request.form.get("fecha_vacuna")
     fecha_vencimiento = request.form.get("fecha_vencimiento")
     conn = get_db()
+    animal = conn.execute("SELECT id FROM animales WHERE id=? AND empresa_id=?", (animal_id, current_empresa_id())).fetchone()
+    if animal is None:
+        conn.close()
+        abort(404)
     conn.execute(
-        "INSERT INTO vacunas (animal_id, fecha_vacuna, fecha_vencimiento, empresa_id) VALUES (?, ?, ?, ?)",
-        (animal_id, fecha_vacuna, fecha_vencimiento, current_empresa_id()),
+        "INSERT INTO vacunas (animal_id, tipo, fecha_vacuna, fecha_vencimiento, empresa_id) VALUES (?, ?, ?, ?, ?)",
+        (animal_id, tipo, fecha_vacuna, fecha_vencimiento, current_empresa_id()),
     )
+    # Mantener visible la última vacunación en la tabla de animales, sin afectar datos anteriores
+    try:
+        conn.execute(
+            "UPDATE animales SET ultima_vacunacion=? WHERE id=? AND empresa_id=?",
+            (fecha_vacuna, animal_id, current_empresa_id())
+        )
+    except Exception:
+        pass
     conn.commit()
     conn.close()
     return redirect(url_for("vacunas", animal_id=animal_id))
