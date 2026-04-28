@@ -4,33 +4,39 @@
 
 <form method="POST" action="{{ url_for('vacuna_nueva', animal_id=animal['id']) }}" class="mb-4 p-3 border rounded shadow-sm bg-white">
   <div class="row g-3">
-    <div class="col-md-6">
-      <label for="fecha_vacuna" class="form-label">Fecha Vacuna</label>
+    <div class="col-md-4">
+      <label for="tipo" class="form-label">Tipo</label>
+      <input type="text" id="tipo" name="tipo" class="form-control" placeholder="Rabia, séxtuple, triple felina..." required>
+    </div>
+    <div class="col-md-4">
+      <label for="fecha_vacuna" class="form-label">Fecha vacuna</label>
       <input type="date" id="fecha_vacuna" name="fecha_vacuna" class="form-control" required>
     </div>
-    <div class="col-md-6">
-      <label for="fecha_vencimiento" class="form-label">Fecha Vencimiento</label>
+    <div class="col-md-4">
+      <label for="fecha_vencimiento" class="form-label">Fecha vencimiento</label>
       <input type="date" id="fecha_vencimiento" name="fecha_vencimiento" class="form-control" required>
     </div>
   </div>
-  <button type="submit" class="btn btn-primary mt-3">Agregar Vacuna</button>
+  <button type="submit" class="btn btn-primary mt-3">Agregar vacuna</button>
 </form>
 
 <table class="table table-hover shadow-sm">
   <thead class="table-warning">
     <tr>
-      <th>Fecha Vacuna</th>
-      <th>Fecha Vencimiento</th>
+      <th>Tipo</th>
+      <th>Fecha vacuna</th>
+      <th>Fecha vencimiento</th>
     </tr>
   </thead>
   <tbody>
     {% for vac in vacunas %}
     <tr>
+      <td>{{ vac['tipo'] or '' }}</td>
       <td>{{ vac['fecha_vacuna'] }}</td>
       <td>{{ vac['fecha_vencimiento'] }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="2" class="text-center">No hay vacunas registradas.</td></tr>
+    <tr><td colspan="3" class="text-center">No hay vacunas registradas.</td></tr>
     {% endfor %}
   </tbody>
 </table>
