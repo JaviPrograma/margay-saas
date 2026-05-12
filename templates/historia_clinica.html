@@ -3,6 +3,13 @@
 {% block content %}
 <h2>Historia Clínica de {{ animal['nombre'] }}</h2>
 
+<style>
+  .hc-adjunto-img{max-height:150px;border-radius:6px;box-shadow:0 0 5px #888;cursor:zoom-in;}
+  .hc-adjunto-card{width:150px;min-height:105px;border:1px solid #ddd;border-radius:8px;padding:10px;background:#fafafa;text-decoration:none;color:#222;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;box-shadow:0 0 5px #ddd;}
+  .hc-adjunto-card:hover{background:#f0f0f0;color:#000;}
+  .hc-file-name{font-size:12px;word-break:break-word;margin-top:6px;}
+</style>
+
 <div class="list-group mt-3">
   {% for entry in historia %}
   <div class="list-group-item mb-3 shadow-sm bg-white">
@@ -18,12 +25,8 @@
       </div>
     </div>
 
-    {% if entry['motivo_consulta'] %}
-      <div class="mt-2"><strong>Motivo:</strong> {{ entry['motivo_consulta'] }}</div>
-    {% endif %}
-    {% if entry['anamnesis'] %}
-      <div><strong>Anamnesis:</strong> {{ entry['anamnesis'] }}</div>
-    {% endif %}
+    {% if entry['motivo_consulta'] %}<div class="mt-2"><strong>Motivo:</strong> {{ entry['motivo_consulta'] }}</div>{% endif %}
+    {% if entry['anamnesis'] %}<div><strong>Anamnesis:</strong> {{ entry['anamnesis'] }}</div>{% endif %}
 
     {% if entry['peso_kg'] or entry['temp_c'] or entry['fc'] or entry['fr'] or entry['mucosas'] or entry['hidratacion'] %}
     <div class="mt-2">
@@ -39,46 +42,46 @@
     </div>
     {% endif %}
 
-    {% if entry['diagnostico_presuntivo'] %}
-      <div class="mt-2"><strong>Dx presuntivo:</strong> {{ entry['diagnostico_presuntivo'] }}</div>
-    {% endif %}
-    {% if entry['diagnostico_diferencial'] %}
-      <div><strong>Dx diferencial:</strong> {{ entry['diagnostico_diferencial'] }}</div>
-    {% endif %}
-    {% if entry['tratamiento'] %}
-      <div class="mt-2"><strong>Tratamiento:</strong> {{ entry['tratamiento'] }}</div>
-    {% endif %}
-    {% if entry['indicaciones'] %}
-      <div><strong>Indicaciones:</strong> {{ entry['indicaciones'] }}</div>
-    {% endif %}
-    {% if entry['particularidades'] %}
-      <div><strong>Particularidades:</strong> {{ entry['particularidades'] }}</div>
-    {% endif %}
-    {% if entry['proxima_cita'] %}
-      <div class="mt-2 text-primary"><strong>Próxima cita:</strong> {{ entry['proxima_cita'] }}</div>
-    {% endif %}
+    {% if entry['diagnostico_presuntivo'] %}<div class="mt-2"><strong>Dx presuntivo:</strong> {{ entry['diagnostico_presuntivo'] }}</div>{% endif %}
+    {% if entry['diagnostico_diferencial'] %}<div><strong>Dx diferencial:</strong> {{ entry['diagnostico_diferencial'] }}</div>{% endif %}
+    {% if entry['tratamiento'] %}<div class="mt-2"><strong>Tratamiento:</strong> {{ entry['tratamiento'] }}</div>{% endif %}
+    {% if entry['indicaciones'] %}<div><strong>Indicaciones:</strong> {{ entry['indicaciones'] }}</div>{% endif %}
+    {% if entry['particularidades'] %}<div><strong>Particularidades:</strong> {{ entry['particularidades'] }}</div>{% endif %}
+    {% if entry['proxima_cita'] %}<div class="mt-2 text-primary"><strong>Próxima cita:</strong> {{ entry['proxima_cita'] }}</div>{% endif %}
 
     {% if imagenes[entry['id']] %}
-    <div class="d-flex flex-wrap gap-2 mt-2">
+    <div class="d-flex flex-wrap gap-2 mt-2 align-items-start">
       {% for img in imagenes[entry['id']] %}
-      <img src="{{ url_for('uploads', filename=img['filename']) }}" alt="Imagen" style="max-height: 150px; border-radius: 6px; box-shadow: 0 0 5px #888;">
+        {% set fn = img['filename'] %}
+        {% set low = fn|lower %}
+        {% set url = url_for('uploads', filename=fn) %}
+        {% if low.endswith('.jpg') or low.endswith('.jpeg') or low.endswith('.png') or low.endswith('.gif') or low.endswith('.webp') or low.endswith('.bmp') %}
+          <a href="{{ url }}" target="_blank" title="Abrir imagen grande">
+            <img src="{{ url }}" alt="Imagen" class="hc-adjunto-img">
+          </a>
+        {% elif low.endswith('.pdf') %}
+          <a href="{{ url }}" target="_blank" class="hc-adjunto-card" title="Abrir PDF">
+            <div style="font-size:36px;">📄</div>
+            <strong>PDF</strong>
+            <div class="hc-file-name">{{ fn }}</div>
+          </a>
+        {% else %}
+          <a href="{{ url }}" target="_blank" class="hc-adjunto-card" title="Abrir adjunto">
+            <div style="font-size:34px;">📎</div>
+            <strong>Adjunto</strong>
+            <div class="hc-file-name">{{ fn }}</div>
+          </a>
+        {% endif %}
       {% endfor %}
     </div>
     {% endif %}
 
-    {% if entry['descripcion'] %}
-      <p class="mt-2">{{ entry['descripcion']|replace('\n','<br>')|safe }}</p>
-    {% endif %}
+    {% if entry['descripcion'] %}<p class="mt-2">{{ entry['descripcion']|replace('\n','<br>')|safe }}</p>{% endif %}
 
-    <!-- Botón opcional: abrir agendado con datos precargados -->
-    <div class="mt-2">
+    <div class="mt-3 d-flex flex-wrap gap-2">
+      <a class="btn btn-sm btn-outline-warning" href="{{ url_for('historia_editar', historia_id=entry['id']) }}">✏️ Editar historia / adjuntos</a>
       <a class="btn btn-sm btn-outline-primary"
-         href="{{ url_for('agenda_nueva',
-                          cliente_id=animal['cliente_id'],
-                          animal_id=animal['id'],
-                          doctor_id=(entry['a_doctor_id'] or entry['doctor_id']),
-                          motivo_id=entry['a_motivo_id'],
-                          lugar=(entry['a_lugar'] or 'Clinica')) }}">
+         href="{{ url_for('agenda_nueva', cliente_id=animal['cliente_id'], animal_id=animal['id'], doctor_id=(entry['a_doctor_id'] or entry['doctor_id']), motivo_id=entry['a_motivo_id'], lugar=(entry['a_lugar'] or 'Clinica')) }}">
         Programar próxima cita
       </a>
     </div>

@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h2>Editar historia clínica</h2>
+<p class="text-muted mb-4">Mascota: <strong>{{ entry['animal_nombre'] }}</strong> · Especie: {{ entry['especie'] or '-' }} · Raza: {{ entry['raza'] or '-' }}</p>
+
+<style>
+  .hc-adjunto-img{max-height:120px;border-radius:6px;box-shadow:0 0 5px #888;}
+  .hc-adjunto-card{width:150px;min-height:105px;border:1px solid #ddd;border-radius:8px;padding:10px;background:#fafafa;text-decoration:none;color:#222;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;}
+  .hc-file-name{font-size:12px;word-break:break-word;margin-top:6px;}
+</style>
+
+<form method="post" enctype="multipart/form-data" class="card shadow-sm p-3 bg-white">
+  <div class="row g-3">
+    <div class="col-md-4">
+      <label class="form-label">Fecha</label>
+      <input class="form-control" name="fecha" value="{{ entry['fecha'] or '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Tipo de visita</label>
+      <input class="form-control" name="tipo_visita" value="{{ entry['tipo_visita'] or '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">Próxima cita / control</label>
+      <input class="form-control" name="proxima_cita" value="{{ entry['proxima_cita'] or '' }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Motivo de consulta</label>
+      <textarea class="form-control" name="motivo_consulta" rows="2">{{ entry['motivo_consulta'] or '' }}</textarea>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">Anamnesis</label>
+      <textarea class="form-control" name="anamnesis" rows="2">{{ entry['anamnesis'] or '' }}</textarea>
+    </div>
+  </div>
+
+  <hr>
+  <h5>Examen físico</h5>
+  <div class="row g-3">
+    <div class="col-md-2"><label class="form-label">Peso kg</label><input class="form-control" name="peso_kg" value="{{ entry['peso_kg'] if entry['peso_kg'] is not none else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">Temp °C</label><input class="form-control" name="temp_c" value="{{ entry['temp_c'] if entry['temp_c'] is not none else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">FC</label><input class="form-control" name="fc" value="{{ entry['fc'] if entry['fc'] is not none else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">FR</label><input class="form-control" name="fr" value="{{ entry['fr'] if entry['fr'] is not none else '' }}"></div>
+    <div class="col-md-2"><label class="form-label">Mucosas</label><input class="form-control" name="mucosas" value="{{ entry['mucosas'] or '' }}"></div>
+    <div class="col-md-2"><label class="form-label">Hidratación</label><input class="form-control" name="hidratacion" value="{{ entry['hidratacion'] or '' }}"></div>
+  </div>
+
+  <hr>
+  <div class="row g-3">
+    <div class="col-md-6"><label class="form-label">Dx presuntivo</label><textarea class="form-control" name="diagnostico_presuntivo" rows="2">{{ entry['diagnostico_presuntivo'] or '' }}</textarea></div>
+    <div class="col-md-6"><label class="form-label">Dx diferencial</label><textarea class="form-control" name="diagnostico_diferencial" rows="2">{{ entry['diagnostico_diferencial'] or '' }}</textarea></div>
+    <div class="col-md-6"><label class="form-label">Tratamiento</label><textarea class="form-control" name="tratamiento" rows="2">{{ entry['tratamiento'] or '' }}</textarea></div>
+    <div class="col-md-6"><label class="form-label">Indicaciones</label><textarea class="form-control" name="indicaciones" rows="2">{{ entry['indicaciones'] or '' }}</textarea></div>
+    <div class="col-md-6"><label class="form-label">Particularidades</label><textarea class="form-control" name="particularidades" rows="2">{{ entry['particularidades'] or '' }}</textarea></div>
+    <div class="col-md-6"><label class="form-label">Descripción / notas</label><textarea class="form-control" name="descripcion" rows="2">{{ entry['descripcion'] or '' }}</textarea></div>
+  </div>
+
+  <hr>
+  <h5>Adjuntos actuales</h5>
+  {% if adjuntos %}
+  <div class="d-flex flex-wrap gap-3">
+    {% for adj in adjuntos %}
+      {% set fn = adj['filename'] %}
+      {% set low = fn|lower %}
+      {% set url = url_for('uploads', filename=fn) %}
+      <div class="border rounded p-2 bg-light" style="max-width:180px;">
+        <a href="{{ url }}" target="_blank" style="text-decoration:none;color:#222;">
+          {% if low.endswith('.jpg') or low.endswith('.jpeg') or low.endswith('.png') or low.endswith('.gif') or low.endswith('.webp') or low.endswith('.bmp') %}
+            <img src="{{ url }}" class="hc-adjunto-img" alt="Imagen">
+          {% elif low.endswith('.pdf') %}
+            <div class="hc-adjunto-card"><div style="font-size:34px;">📄</div><strong>PDF</strong><div class="hc-file-name">{{ fn }}</div></div>
+          {% else %}
+            <div class="hc-adjunto-card"><div style="font-size:34px;">📎</div><strong>Adjunto</strong><div class="hc-file-name">{{ fn }}</div></div>
+          {% endif %}
+        </a>
+        <label class="form-check mt-2">
+          <input class="form-check-input" type="checkbox" name="quitar_adjunto" value="{{ adj['id'] }}">
+          <span class="form-check-label">Quitar de esta historia</span>
+        </label>
+      </div>
+    {% endfor %}
+  </div>
+  {% else %}
+    <p class="text-muted">Esta historia no tiene adjuntos.</p>
+  {% endif %}
+
+  <div class="mt-3">
+    <label class="form-label">Agregar nuevos adjuntos</label>
+    <input class="form-control" type="file" name="adjuntos" multiple accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.tif,.tiff">
+  </div>
+
+  <div class="mt-4 d-flex gap-2">
+    <button class="btn btn-primary" type="submit">Guardar cambios</button>
+    <a class="btn btn-secondary" href="{{ url_for('historia', animal_id=entry['animal_id_real']) }}">Volver sin guardar</a>
+  </div>
+</form>
+{% endblock %}

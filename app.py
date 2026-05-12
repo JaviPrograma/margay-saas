@@ -1625,7 +1625,7 @@ def historia(animal_id):
     imagenes = {}
     for h in historia:
         imgs = conn.execute(
-            "SELECT filename FROM imagenes_historia WHERE historia_id=?",
+            "SELECT id, filename FROM imagenes_historia WHERE historia_id=? ORDER BY id",
             (h["id"],),
         ).fetchall()
         imagenes[h["id"]] = imgs
@@ -1637,10 +1637,14 @@ def historia_nueva(animal_id):
     descripcion = request.form.get("descripcion", "").strip()
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M")
     conn = get_db()
+    animal = conn.execute("SELECT id, empresa_id FROM animales WHERE id=? AND empresa_id=?", (animal_id, current_empresa_id())).fetchone()
+    if animal is None:
+        conn.close()
+        abort(404)
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO historia_clinica (animal_id, fecha, descripcion, empresa_id) VALUES (?, ?, ?, ?)",
-        (animal_id, fecha, descripcion, current_empresa_id()),
+        (animal_id, fecha, descripcion, animal["empresa_id"]),
     )
     historia_id = cur.lastrowid
 
@@ -1658,6 +1662,89 @@ def historia_nueva(animal_id):
     conn.commit()
     conn.close()
     return redirect(url_for("historia", animal_id=animal_id))
+
+
+@app.route("/historia/editar/<int:historia_id>", methods=["GET", "POST"])
+def historia_editar(historia_id):
+    conn = get_db()
+    row = conn.execute(
+        """
+        SELECT h.*, an.nombre AS animal_nombre, an.especie, an.raza, an.cliente_id, an.id AS animal_id_real, an.empresa_id AS animal_empresa_id
+          FROM historia_clinica h
+          JOIN animales an ON an.id = h.animal_id
+         WHERE h.id=? AND an.empresa_id=?
+        """,
+        (historia_id, current_empresa_id()),
+    ).fetchone()
+    if row is None:
+        conn.close()
+        abort(404)
+
+    if request.method == "POST":
+        campos = [
+            "fecha", "tipo_visita", "proxima_cita", "motivo_consulta", "anamnesis",
+            "peso_kg", "temp_c", "fc", "fr", "mucosas", "hidratacion",
+            "diagnostico_presuntivo", "diagnostico_diferencial", "tratamiento",
+            "indicaciones", "particularidades", "descripcion"
+        ]
+        datos = []
+        for c in campos:
+            valor = request.form.get(c, "")
+            if c in ("peso_kg", "temp_c"):
+                valor = valor.strip()
+                valor = float(valor) if valor else None
+            elif c in ("fc", "fr"):
+                valor = valor.strip()
+                valor = int(valor) if valor else None
+            else:
+                valor = valor.strip()
+            datos.append(valor)
+
+        set_clause = ", ".join([f"{c}=?" for c in campos])
+        conn.execute(
+            f"UPDATE historia_clinica SET {set_clause}, empresa_id=? WHERE id=? AND animal_id=?",
+            tuple(datos + [row["animal_empresa_id"], historia_id, row["animal_id_real"]]),
+        )
+
+        # Quitar adjuntos solo desvincula de esta historia. No borra el archivo físico.
+        quitar = request.form.getlist("quitar_adjunto")
+        for adj_id in quitar:
+            try:
+                conn.execute(
+                    "DELETE FROM imagenes_historia WHERE id=? AND historia_id=?",
+                    (int(adj_id), historia_id),
+                )
+            except Exception:
+                pass
+
+        # Agregar adjuntos nuevos
+        for file in request.files.getlist("adjuntos"):
+            if file and file.filename:
+                filename = secure_filename(file.filename)
+                base, ext = os.path.splitext(filename)
+                destino = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                i = 1
+                while os.path.exists(destino):
+                    filename = f"{base}_{i}{ext}"
+                    destino = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                    i += 1
+                file.save(destino)
+                conn.execute(
+                    "INSERT INTO imagenes_historia (historia_id, filename) VALUES (?, ?)",
+                    (historia_id, filename),
+                )
+
+        conn.commit()
+        conn.close()
+        flash("Historia clínica actualizada correctamente.", "success")
+        return redirect(url_for("historia", animal_id=row["animal_id_real"]))
+
+    adjuntos = conn.execute(
+        "SELECT id, filename FROM imagenes_historia WHERE historia_id=? ORDER BY id",
+        (historia_id,),
+    ).fetchall()
+    conn.close()
+    return render_template("historia_editar.html", entry=row, adjuntos=adjuntos)
 
 # -------- Vacunas --------
 @app.route("/vacunas/<int:animal_id>")
@@ -1738,9 +1825,48 @@ def desparasitacion_nueva(animal_id):
     return redirect(url_for("desparasitaciones", animal_id=animal_id))
 
 # -------- Archivos subidos --------
-@app.route("/uploads/<filename>")
+def _upload_search_dirs():
+    """
+    Busca adjuntos en todas las ubicaciones usadas históricamente por el sistema.
+    Esto evita que historias clínicas viejas queden con enlaces rotos si antes los
+    archivos estaban en /uploads, static/uploads, /var/data/uploads o /tmp/uploads.
+    """
+    candidates = [
+        app.config.get('UPLOAD_FOLDER'),
+        os.path.join(_project_dir(), 'uploads'),
+        os.path.join(_project_dir(), 'static', 'uploads'),
+        '/var/data/uploads',
+        '/tmp/uploads',
+    ]
+    seen = set()
+    result = []
+    for d in candidates:
+        if not d:
+            continue
+        abs_d = os.path.abspath(d)
+        if abs_d not in seen:
+            seen.add(abs_d)
+            result.append(abs_d)
+    return result
+
+@app.route("/uploads/<path:filename>")
 def uploads(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    # No modificar el nombre: la base guarda el filename exacto de cada adjunto.
+    # send_from_directory protege contra rutas inseguras.
+    for base_dir in _upload_search_dirs():
+        full = os.path.join(base_dir, filename)
+        if os.path.isfile(full):
+            return send_from_directory(base_dir, filename)
+
+    # Fallback por si algún registro quedó con una ruta y el archivo existe solo por nombre.
+    only_name = os.path.basename(filename)
+    if only_name and only_name != filename:
+        for base_dir in _upload_search_dirs():
+            full = os.path.join(base_dir, only_name)
+            if os.path.isfile(full):
+                return send_from_directory(base_dir, only_name)
+
+    abort(404)
 
 # -------- Motivos (precios + tipo) --------
 @app.route("/motivos")
@@ -2097,14 +2223,14 @@ def atender_cita(cita_id):
              diagnostico_presuntivo, diagnostico_diferencial,
              tratamiento, indicaciones, particularidades,
              proxima_cita, tipo_visita,
-             doctor_id, cita_id)
+             doctor_id, cita_id, empresa_id)
             VALUES
             ( ?, ?, ?,
               ?, ?, ?, ?, ?, ?,
               ?, ?,
               ?, ?,
               ?, ?, ?,
-              ?, ?, ?, ? )
+              ?, ?, ?, ?, ? )
         """, (
             cita["animal_id"], ahora, descripcion,
             peso_kg, temp_c, fc, fr, mucosas, hidratacion,
@@ -2112,7 +2238,7 @@ def atender_cita(cita_id):
             dx_presuntivo, dx_diferencial,
             tratamiento, indicaciones, particularidades,
             proxima_cita_texto, cita["motivo_tipo"],
-            cita["doctor_id"], cita_id
+            cita["doctor_id"], cita_id, current_empresa_id()
         ))
         historia_id = cur.lastrowid
 
