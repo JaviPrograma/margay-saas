@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Historia clínica - {{ entry['animal_nombre'] }}</title>
+  <style>
+    *{box-sizing:border-box;}
+    body{font-family:Arial,Helvetica,sans-serif;color:#222;background:#f3f3f3;margin:0;padding:24px;line-height:1.4;}
+    .sheet{max-width:900px;margin:0 auto;background:#fff;padding:34px 42px;box-shadow:0 2px 12px rgba(0,0,0,.12);}
+    .header{display:flex;justify-content:space-between;gap:24px;align-items:center;border-bottom:2px solid #8c5cc4;padding-bottom:16px;margin-bottom:20px;}
+    .logo{width:155px;max-height:90px;object-fit:contain;}
+    .clinic{text-align:right;}
+    .clinic h1{font-size:22px;margin:0 0 4px;color:#5f3398;}
+    .clinic .doc-title{font-size:15px;color:#555;}
+    .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 28px;margin:18px 0;}
+    .box{border:1px solid #ddd;border-radius:8px;padding:14px 16px;margin:14px 0;page-break-inside:avoid;}
+    .box h2{font-size:15px;margin:0 0 10px;color:#5f3398;border-bottom:1px solid #eee;padding-bottom:6px;}
+    .row{margin:5px 0;white-space:pre-wrap;}
+    .label{font-weight:700;}
+    .exam{display:grid;grid-template-columns:repeat(3,1fr);gap:7px 18px;}
+    .attachments{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;}
+    .attachments img{max-width:220px;max-height:180px;object-fit:contain;border:1px solid #ddd;border-radius:6px;padding:3px;}
+    .file{font-size:12px;border:1px solid #ddd;border-radius:6px;padding:8px;max-width:240px;word-break:break-all;}
+    .footer{border-top:1px solid #ddd;margin-top:28px;padding-top:12px;font-size:11px;color:#666;display:flex;justify-content:space-between;gap:20px;}
+    .actions{max-width:900px;margin:0 auto 14px;display:flex;gap:10px;}
+    button{border:0;border-radius:6px;padding:10px 16px;font-size:14px;cursor:pointer;background:#8c5cc4;color:#fff;}
+    button.secondary{background:#555;}
+    @media print{
+      @page{size:A4;margin:13mm;}
+      body{background:#fff;padding:0;}
+      .actions{display:none!important;}
+      .sheet{max-width:none;box-shadow:none;padding:0;}
+      .header{margin-top:0;}
+    }
+    @media(max-width:650px){
+      body{padding:10px;}
+      .sheet{padding:22px 18px;}
+      .header{align-items:flex-start;}
+      .clinic{text-align:left;}
+      .meta-grid,.exam{grid-template-columns:1fr;}
+    }
+  </style>
+</head>
+<body>
+  <div class="actions">
+    <button onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+    <button class="secondary" onclick="window.close()">Cerrar</button>
+  </div>
+
+  <article class="sheet">
+    <header class="header">
+      <img class="logo" src="{{ url_for('static', filename='img/logo.png') }}" alt="VetCloud">
+      <div class="clinic">
+        <h1>{{ entry['empresa_nombre'] }}</h1>
+        <div class="doc-title">Historia clínica veterinaria · Atención individual</div>
+      </div>
+    </header>
+
+    <section class="meta-grid">
+      <div><span class="label">Cliente:</span> {{ entry['cliente_nombre'] or 'No disponible' }}</div>
+      <div><span class="label">Mascota:</span> {{ entry['animal_nombre'] }}</div>
+      {% if entry['cliente_cedula'] %}<div><span class="label">Cédula:</span> {{ entry['cliente_cedula'] }}</div>{% endif %}
+      {% if entry['cliente_telefono'] %}<div><span class="label">Teléfono:</span> {{ entry['cliente_telefono'] }}</div>{% endif %}
+      {% if entry['cliente_direccion'] %}<div><span class="label">Dirección:</span> {{ entry['cliente_direccion'] }}</div>{% endif %}
+      <div><span class="label">Fecha de atención:</span> {{ fecha_impresa }}</div>
+      {% if entry['especie'] %}<div><span class="label">Especie:</span> {{ entry['especie'] }}</div>{% endif %}
+      {% if entry['raza'] %}<div><span class="label">Raza:</span> {{ entry['raza'] }}</div>{% endif %}
+      {% if entry['sexo'] %}<div><span class="label">Sexo:</span> {{ entry['sexo'] }}</div>{% endif %}
+      {% if entry['fecha_nacimiento'] %}<div><span class="label">Fecha de nacimiento:</span> {{ entry['fecha_nacimiento'] }}</div>{% endif %}
+      {% if entry['microchip'] %}<div><span class="label">Microchip:</span> {{ entry['microchip'] }}</div>{% endif %}
+      <div><span class="label">Atendido por:</span> {{ entry['doctor_nombre'] or 'No especificado' }}</div>
+    </section>
+
+    {% if entry['motivo_consulta'] or entry['anamnesis'] %}
+    <section class="box">
+      <h2>Consulta</h2>
+      {% if entry['motivo_consulta'] %}<div class="row"><span class="label">Motivo:</span> {{ entry['motivo_consulta'] }}</div>{% endif %}
+      {% if entry['anamnesis'] %}<div class="row"><span class="label">Anamnesis:</span> {{ entry['anamnesis'] }}</div>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if entry['peso_kg'] is not none or entry['temp_c'] is not none or entry['fc'] is not none or entry['fr'] is not none or entry['mucosas'] or entry['hidratacion'] %}
+    <section class="box">
+      <h2>Examen físico</h2>
+      <div class="exam">
+        {% if entry['peso_kg'] is not none %}<div><span class="label">Peso:</span> {{ entry['peso_kg'] }} kg</div>{% endif %}
+        {% if entry['temp_c'] is not none %}<div><span class="label">Temperatura:</span> {{ entry['temp_c'] }} °C</div>{% endif %}
+        {% if entry['fc'] is not none %}<div><span class="label">FC:</span> {{ entry['fc'] }} lpm</div>{% endif %}
+        {% if entry['fr'] is not none %}<div><span class="label">FR:</span> {{ entry['fr'] }} rpm</div>{% endif %}
+        {% if entry['mucosas'] %}<div><span class="label">Mucosas:</span> {{ entry['mucosas'] }}</div>{% endif %}
+        {% if entry['hidratacion'] %}<div><span class="label">Hidratación:</span> {{ entry['hidratacion'] }}</div>{% endif %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if entry['descripcion'] or entry['diagnostico_presuntivo'] or entry['diagnostico_diferencial'] %}
+    <section class="box">
+      <h2>Evaluación clínica</h2>
+      {% if entry['descripcion'] %}<div class="row"><span class="label">Examen / descripción:</span> {{ entry['descripcion'] }}</div>{% endif %}
+      {% if entry['diagnostico_presuntivo'] %}<div class="row"><span class="label">Diagnóstico presuntivo:</span> {{ entry['diagnostico_presuntivo'] }}</div>{% endif %}
+      {% if entry['diagnostico_diferencial'] %}<div class="row"><span class="label">Diagnóstico diferencial:</span> {{ entry['diagnostico_diferencial'] }}</div>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if entry['tratamiento'] or entry['indicaciones'] or entry['particularidades'] or entry['proxima_cita'] %}
+    <section class="box">
+      <h2>Tratamiento e indicaciones</h2>
+      {% if entry['tratamiento'] %}<div class="row"><span class="label">Tratamiento:</span> {{ entry['tratamiento'] }}</div>{% endif %}
+      {% if entry['indicaciones'] %}<div class="row"><span class="label">Indicaciones:</span> {{ entry['indicaciones'] }}</div>{% endif %}
+      {% if entry['particularidades'] %}<div class="row"><span class="label">Particularidades:</span> {{ entry['particularidades'] }}</div>{% endif %}
+      {% if entry['proxima_cita'] %}<div class="row"><span class="label">Próxima cita / control:</span> {{ entry['proxima_cita'] }}</div>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if adjuntos %}
+    <section class="box">
+      <h2>Adjuntos de esta atención</h2>
+      <div class="attachments">
+        {% for adj in adjuntos %}
+          {% set fn = adj['filename'] %}
+          {% set low = fn|lower %}
+          {% if low.endswith('.jpg') or low.endswith('.jpeg') or low.endswith('.png') or low.endswith('.gif') or low.endswith('.webp') or low.endswith('.bmp') %}
+            <img src="{{ url_for('uploads', filename=fn) }}" alt="Adjunto clínico">
+          {% else %}
+            <div class="file">Adjunto: {{ fn }}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <footer class="footer">
+      <span>{{ entry['empresa_nombre'] }}</span>
+      <span>Documento generado desde VetCloud</span>
+    </footer>
+  </article>
+</body>
+</html>

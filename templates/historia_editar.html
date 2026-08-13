@@ -25,6 +25,16 @@
       <input class="form-control" name="proxima_cita" value="{{ entry['proxima_cita'] or '' }}">
     </div>
     <div class="col-md-6">
+      <label class="form-label">Atendido por</label>
+      <select class="form-select" name="doctor_id">
+        <option value="">Sin cambiar</option>
+        {% for doctor in doctores %}
+          <option value="{{ doctor['id'] }}" {{ 'selected' if entry['doctor_id'] == doctor['id'] else '' }}>{{ doctor['nombre'] }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">Podés corregir el profesional que figura en esta atención.</div>
+    </div>
+    <div class="col-md-6">
       <label class="form-label">Motivo de consulta</label>
       <textarea class="form-control" name="motivo_consulta" rows="2">{{ entry['motivo_consulta'] or '' }}</textarea>
     </div>

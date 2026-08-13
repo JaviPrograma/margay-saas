@@ -29,6 +29,38 @@
   </div>
 </div>
 
+
+{% if modo_socios %}
+<div class="card p-3 shadow-sm mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+    <h5 class="mb-0">Pagos registrados</h5>
+    <div class="small text-muted">Método actual: <strong>{{ mensualidad.metodo_pago or 'Sin registrar' }}</strong></div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr><th>Fecha</th><th>Monto</th><th>Método</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for p in pagos_mov %}
+        <tr>
+          <td>{{ p.fecha_pago }}</td>
+          <td>${{ '%.2f'|format(p.monto or 0) }}</td>
+          <td>{{ p.metodo_pago or 'Sin registrar' }}</td>
+          <td>
+            {% if p.anulado %}<span class="badge bg-secondary">Anulado</span>
+            {% else %}<span class="badge bg-success">Registrado</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" class="text-center text-muted">Todavía no hay movimientos de pago registrados para esta mensualidad.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 <div class="card p-3 shadow-sm">
   <div class="table-responsive">
     <table class="table table-striped align-middle">

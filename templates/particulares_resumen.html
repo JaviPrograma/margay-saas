@@ -26,14 +26,20 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-3">
+    <div class="{{ 'col-md-2' if modo_socios else 'col-md-3' }}">
       <label class="form-label">Nombre</label>
-      <input class="form-control" name="nombre" value="{{ filtros.nombre }}" placeholder="Buscar por nombre">
+      <input class="form-control" name="nombre" value="{{ filtros.nombre }}" placeholder="Buscar por nombre y apellido">
     </div>
-    <div class="col-md-3">
+    <div class="{{ 'col-md-2' if modo_socios else 'col-md-3' }}">
       <label class="form-label">Cédula</label>
       <input class="form-control" name="cedula" value="{{ filtros.cedula }}" placeholder="Buscar por cédula">
     </div>
+    {% if modo_socios %}
+    <div class="col-md-2">
+      <label class="form-label">N.º socio</label>
+      <input class="form-control" name="socio" value="{{ filtros.socio }}" placeholder="Buscar por socio">
+    </div>
+    {% endif %}
     <div class="col-md-2 d-flex align-items-end">
       <button class="btn btn-primary w-100">Filtrar</button>
     </div>
@@ -47,6 +53,7 @@
         <tr>
           <th>Cliente</th>
           <th>Cédula</th>
+          {% if modo_socios %}<th>N.º socio</th>{% endif %}
           <th>Teléfono</th>
           <th>Citas</th>
           <th>Total ($)</th>
@@ -60,6 +67,7 @@
         <tr>
           <td>{{ r.nombre }}</td>
           <td>{{ r.cedula or '' }}</td>
+          {% if modo_socios %}<td>{{ r.numero_socio or '' }}</td>{% endif %}
           <td>{{ r.telefono or '' }}</td>
           <td>{{ r.citas }}</td>
           <td>{{ '%.2f'|format(r.total) }}</td>
@@ -77,7 +85,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="8" class="text-center">No hay datos para ese mes.</td></tr>
+        <tr><td colspan="{{ 9 if modo_socios else 8 }}" class="text-center">No hay datos para ese mes.</td></tr>
         {% endfor %}
       </tbody>
     </table>

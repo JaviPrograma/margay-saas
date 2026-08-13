@@ -25,6 +25,7 @@
           <th>Mes</th>
           <th>Estado</th>
           <th>Fecha de pago</th>
+          {% if modo_socios %}<th>Método de pago</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -40,6 +41,7 @@
             {% endif %}
           </td>
           <td id="f{{ reg and reg['mensualidad_id'] or '' }}">{{ reg and (reg['fecha_pago'] or '') }}</td>
+          {% if modo_socios %}<td>{{ reg and (reg['metodo_pago'] or 'Sin registrar') or '' }}</td>{% endif %}
         </tr>
         {% endfor %}
       </tbody>

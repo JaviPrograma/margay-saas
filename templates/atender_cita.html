@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="container mt-3">
-  <h2>Atender cita</h2>
+  <h2>{{ 'Atender cliente' if atencion_directa_nueva else 'Atender cita' }}</h2>
 
   <div class="card mb-3">
     <div class="card-body">
@@ -14,11 +14,24 @@
         <div class="col-md-3"><strong>Motivo:</strong> {{ cita.motivo_nombre or '—' }}{% if cita.motivo_tipo=='urgencia' %} <span class="badge bg-danger ms-2">Urgencia</span>{% endif %}</div>
         <div class="col-md-3"><strong>Lugar:</strong> {{ cita.lugar }}</div>
       </div>
-      <div class="mt-2 text-muted small">Al guardar, la cita quedará marcada como <b>atendida</b> y se ocultará de la agenda.</div>
+      <div class="mt-2 text-muted small">
+        {% if atencion_directa_nueva %}
+          Al guardar se registrarán juntas la atención y la historia clínica, con la fecha y hora actuales.
+        {% else %}
+          Al guardar, la cita quedará marcada como <b>atendida</b> y se ocultará de la agenda.
+        {% endif %}
+      </div>
     </div>
   </div>
 
-  <form method="POST" enctype="multipart/form-data" class="mb-4 p-3 border rounded bg-white">
+  <form method="POST" enctype="multipart/form-data" class="mb-4 p-3 border rounded bg-white"{% if form_action %} action="{{ form_action }}"{% endif %}>
+    {% if atencion_directa_nueva %}
+      <input type="hidden" name="cliente_id" value="{{ cita.cliente_id }}">
+      <input type="hidden" name="animal_id" value="{{ cita.animal_id }}">
+      <input type="hidden" name="doctor_id" value="{{ cita.doctor_id }}">
+      <input type="hidden" name="motivo_id" value="{{ cita.motivo_id }}">
+      <input type="hidden" name="lugar" value="{{ cita.lugar }}">
+    {% endif %}
     <h5 class="mb-3">Historia Clínica</h5>
 
     <div class="row g-3">
@@ -92,7 +105,11 @@
 
     <div class="mt-3 d-flex gap-2">
       <button type="submit" class="btn btn-primary">Guardar historia</button>
+      {% if atencion_directa_nueva %}
+      <a href="{{ url_for('atender_directo') }}" class="btn btn-secondary">Cambiar cliente / volver</a>
+      {% else %}
       <a href="{{ url_for('agenda_lista') }}" class="btn btn-secondary">Volver a agenda</a>
+      {% endif %}
     </div>
   </form>
 </div>

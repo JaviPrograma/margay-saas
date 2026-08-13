@@ -63,6 +63,9 @@
       <td>{{ animal['fecha_nacimiento'] }}</td>
       <td>{{ animal['ultima_desparasitacion'] or '' }}</td>
       <td>
+        {% if modo_atencion_directa %}
+        <a href="{{ url_for('atender_directo', cliente_id=cliente['id'], animal_id=animal['id']) }}" class="btn btn-sm btn-primary">🩺 Atender ahora</a>
+        {% endif %}
         <a href="{{ url_for('historia', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-primary">Historia Clínica</a>
         <a href="{{ url_for('vacunas', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-success">Vacunas</a>
         <a href="{{ url_for('desparasitaciones', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-info">Desparasitación</a>

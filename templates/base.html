@@ -73,7 +73,11 @@
       <ul class="navbar-nav ms-auto align-items-lg-center">
         <li class="nav-item"><a class="nav-link" href="{{ url_for('clientes') }}">Clientes</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('doctores') }}">Doctores</a></li>
+        {% if modo_atencion_directa %}
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('atender_directo') }}">Atender</a></li>
+        {% else %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('agenda_lista') }}">Agenda</a></li>
+        {% endif %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('motivos') }}">Motivos</a></li>
 
         <li class="nav-item dropdown">

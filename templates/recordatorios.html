@@ -37,6 +37,28 @@
       </div>
     </div>
 
+    {% if modo_socios %}
+    <div class="col-12 col-lg-6">
+      <div class="card p-3 h-100 border-warning">
+        <h6>Aviso automático por 3 mensualidades impagas</h6>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="mora3_enabled" id="mora3_enabled" {% if cfg and cfg['mora3_enabled'] %}checked{% endif %}>
+          <label class="form-check-label" for="mora3_enabled">Activar chequeo automático</label>
+        </div>
+        <label class="form-label mt-2">Mensaje</label>
+        <textarea class="form-control" name="mora3_template" rows="4">{{ (cfg['mora3_template'] or '') if cfg else '' }}</textarea>
+        <div class="form-text">Podés usar {CLIENTE}, {MESES_IMPAGOS}, {DESDE} y {EMPRESA}. El sistema revisa solo todos los días y genera un único aviso por cada racha de deuda. Se considera vencido cada mes al llegar el “Día del mes” configurado en Mensualidades.</div>
+        <div class="row mt-2 g-2">
+          <div class="col-md-6">
+            <label class="form-label">Hora</label>
+            <input type="time" class="form-control" name="mora3_hora" value="{{ cfg['mora3_hora'] if cfg and cfg['mora3_hora'] else '10:00' }}">
+          </div>
+        </div>
+        <div class="alert alert-light border mt-3 mb-0 small">Este aviso no borra al cliente ni su historia. Notifica que la mensualidad será dada de baja si no regulariza.</div>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="col-12 col-lg-4">
       <div class="card p-3 h-100">
         <h6>Vacunas</h6>

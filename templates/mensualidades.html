@@ -27,6 +27,12 @@
         {% endfor %}
       </select>
     </div>
+    {% if modo_socios %}
+    <div class="col-md-3">
+      <label class="form-label">Buscar cliente</label>
+      <input class="form-control" name="buscar" value="{{ buscar or '' }}" placeholder="Nombre, cédula o N.º socio">
+    </div>
+    {% endif %}
     <div class="col-md-3 d-flex align-items-end">
       <button class="btn btn-primary" type="submit">Ver</button>
     </div>
@@ -49,6 +55,7 @@
           <th>Saldo ($)</th>
           <th>Estado</th>
           <th>Fecha pago</th>
+          {% if modo_socios %}<th>Método de pago</th>{% endif %}
           <th>Acciones</th>
         </tr>
       </thead>
@@ -57,7 +64,7 @@
         <tr id="row-{{ r['mensualidad_id'] }}">
           <td>
             <strong>{{ r['nombre'] }}</strong><br>
-            <small class="text-muted">{{ r['cedula'] or '' }} · {{ r['telefono'] or '' }}</small>
+            <small class="text-muted">{% if modo_socios and r['numero_socio'] %}Socio {{ r['numero_socio'] }} · {% endif %}{{ r['cedula'] or '' }} · {{ r['telefono'] or '' }}</small>
           </td>
           <td>{{ r['monto_cuota'] is not none and ('%.2f'|format(r['monto_cuota'])) or '—' }}</td>
           <td>{{ '%.2f'|format(r['extras'] or 0) }}</td>
@@ -70,8 +77,23 @@
             </span>
           </td>
           <td id="fecha-{{ r['mensualidad_id'] }}">{{ r['fecha_pago'] or '' }}</td>
+          {% if modo_socios %}
+          <td>
+            {% if r['pagado'] %}
+              <span id="metodo-text-{{ r['mensualidad_id'] }}">{{ r['metodo_pago'] or 'Sin registrar' }}</span>
+            {% else %}
+              <select id="metodo-{{ r['mensualidad_id'] }}" class="form-select form-select-sm" style="min-width:145px">
+                <option value="">Seleccionar…</option>
+                {% set pref = r['metodo_pago_mensualidad'] or '' %}
+                {% for op in ['Efectivo','Tarjeta','Transferencia','Débito automático','Otro'] %}
+                  <option value="{{ op }}" {{ 'selected' if pref==op else '' }}>{{ op }}</option>
+                {% endfor %}
+              </select>
+            {% endif %}
+          </td>
+          {% endif %}
           <td class="d-flex flex-wrap gap-1">
-            <button class="btn btn-sm btn-outline-primary" onclick="togglePago({{ r['mensualidad_id'] }})">Cambiar estado</button>
+            <button class="btn btn-sm btn-outline-primary" onclick="togglePago({{ r['mensualidad_id'] }}, {{ 'true' if r['pagado'] else 'false' }})">Cambiar estado</button>
             <a class="btn btn-sm btn-secondary" href="{{ url_for('mensualidad_gestionar', mensualidad_id=r['mensualidad_id']) }}">Gestionar</a>
           </td>
         </tr>
@@ -82,11 +104,25 @@
 </div>
 
 <script>
-async function togglePago(id){
-  const resp = await fetch(`{{ url_for('mensualidad_toggle', mensualidad_id=0) }}`.replace('0', id), { method:'POST' });
-  if(!resp.ok){ alert('Error cambiando estado'); return; }
-  const data = await resp.json();
+async function togglePago(id, estabaPagado){
+  const options = { method:'POST', headers:{} };
+  {% if modo_socios %}
+  if(!estabaPagado){
+    const sel = document.getElementById('metodo-' + id);
+    const metodo = sel ? sel.value : '';
+    if(!metodo){ alert('Seleccioná el método de pago.'); return; }
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify({metodo_pago: metodo});
+  }
+  {% endif %}
+  const resp = await fetch(`{{ url_for('mensualidad_toggle', mensualidad_id=0) }}`.replace('0', id), options);
+  const data = await resp.json().catch(()=>({}));
+  if(!resp.ok){ alert(data.error || 'Error cambiando estado'); return; }
   if(data.success){
+    {% if modo_socios %}
+    location.reload();
+    return;
+    {% endif %}
     const badge = document.getElementById('badge-'+id);
     const fecha = document.getElementById('fecha-'+id);
     if(data.pagado){

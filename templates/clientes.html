@@ -34,6 +34,22 @@
         <input id="cedula" name="cedula" type="text" class="form-control" value="{{ cliente_edit and cliente_edit['cedula'] or '' }}" placeholder="Ej: 4.123.456-7">
         <div id="cedulaHelp" class="form-text text-danger d-none">Esa cédula ya existe.</div>
       </div>
+      {% if modo_socios %}
+      <div class="col-md-4">
+        <label for="numero_socio" class="form-label">Número de socio</label>
+        <input id="numero_socio" name="numero_socio" type="text" class="form-control" value="{{ cliente_edit and (cliente_edit['numero_socio'] or '') }}" placeholder="Ej: 00125">
+      </div>
+      <div class="col-md-4">
+        <label for="metodo_pago_mensualidad" class="form-label">Método habitual de pago</label>
+        {% set mp = (cliente_edit and cliente_edit['metodo_pago_mensualidad']) or '' %}
+        <select id="metodo_pago_mensualidad" name="metodo_pago_mensualidad" class="form-select">
+          <option value="" {{ 'selected' if not mp else '' }}>Sin definir</option>
+          {% for op in ['Efectivo','Tarjeta','Transferencia','Débito automático','Otro'] %}
+            <option value="{{ op }}" {{ 'selected' if mp==op else '' }}>{{ op }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      {% endif %}
 
       <div class="col-md-6">
         <label for="direccion" class="form-label">Dirección</label>
@@ -69,12 +85,17 @@
   </div>
 
   <form class="row g-2 mb-3" method="get" action="{{ url_for('clientes') }}">
-    <div class="col-md-4">
-      <input class="form-control" name="nombre" placeholder="Buscar por nombre" value="{{ filtros.nombre }}">
+    <div class="{{ 'col-md-3' if modo_socios else 'col-md-4' }}">
+      <input class="form-control" name="nombre" placeholder="Buscar por nombre y apellido" value="{{ filtros.nombre }}">
     </div>
-    <div class="col-md-4">
+    <div class="{{ 'col-md-3' if modo_socios else 'col-md-4' }}">
       <input class="form-control" name="cedula" placeholder="Buscar por cédula" value="{{ filtros.cedula }}">
     </div>
+    {% if modo_socios %}
+    <div class="col-md-2">
+      <input class="form-control" name="socio" placeholder="N.º de socio" value="{{ filtros.socio }}">
+    </div>
+    {% endif %}
     <div class="col-md-3">
       <select class="form-select" name="tipo">
         <option value="">Todos</option>
@@ -95,6 +116,7 @@
           <th>Teléfono</th>
           <th>Email</th>
           <th>Cédula</th>
+          {% if modo_socios %}<th>N.º socio</th>{% endif %}
           <th>Dirección</th>
           <th>Tipo</th>
           <th>Estado</th>
@@ -108,6 +130,7 @@
           <td>{{ c['telefono'] or '' }}</td>
           <td>{{ c['email'] or '' }}</td>
           <td>{{ c['cedula'] or '' }}</td>
+          {% if modo_socios %}<td>{{ c['numero_socio'] or '' }}</td>{% endif %}
           <td>{{ c['direccion'] or '' }}</td>
           <td>{{ c['tipo'] }}</td>
           <td>

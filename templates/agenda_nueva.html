@@ -16,7 +16,7 @@
         <input type="text"
                id="buscador_cliente"
                class="form-control"
-               placeholder="Buscar por cliente, cédula o animal..."
+               placeholder="Buscar por cliente, cédula, N.º de socio o animal..."
                autocomplete="off" />
         <div id="sugerencias_cliente" class="list-group position-absolute w-100 shadow-sm d-none" style="z-index: 1050; max-height: 260px; overflow-y: auto;"></div>
       </div>
@@ -25,7 +25,7 @@
         <option value="" {% if not preset.cliente_id %}selected{% endif %} disabled>Seleccione un cliente</option>
         {% for cliente in clientes %}
           <option value="{{ cliente.id }}" {% if preset.cliente_id == cliente.id %}selected{% endif %}>
-            {{ cliente.nombre }}{% if cliente.cedula %} — {{ cliente.cedula }}{% endif %}
+            {{ cliente.nombre }}{% if cliente.numero_socio %} — Socio {{ cliente.numero_socio }}{% endif %}{% if cliente.cedula %} — CI {{ cliente.cedula }}{% endif %}
           </option>
         {% endfor %}
       </select>
@@ -196,7 +196,7 @@ const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula, animales}, ...]
   }
 
   function labelCliente(c){
-    return c.nombre + (c.cedula ? ' — ' + c.cedula : '');
+    return c.nombre + (c.numero_socio ? ' — Socio ' + c.numero_socio : '') + (c.cedula ? ' — CI ' + c.cedula : '');
   }
 
   function render(options, keepValue){
@@ -244,7 +244,8 @@ const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula, animales}, ...]
       btn.type = 'button';
       btn.className = 'list-group-item list-group-item-action';
       btn.innerHTML = '<div><strong>' + cliente.nombre + '</strong>' +
-                      (cliente.cedula ? ' <span class="text-muted">— ' + cliente.cedula + '</span>' : '') +
+                      (cliente.numero_socio ? ' <span class="text-muted">— Socio ' + cliente.numero_socio + '</span>' : '') +
+                      (cliente.cedula ? ' <span class="text-muted">— CI ' + cliente.cedula + '</span>' : '') +
                       '</div>' +
                       (animalMatch ? '<small class="text-muted">Animal: ' + animalMatch + '</small>' : '<small class="text-muted">Cliente</small>');
       btn.addEventListener('click', () => seleccionarCliente(cliente, animalMatch || null));
@@ -278,9 +279,10 @@ const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula, animales}, ...]
       const animales = Array.isArray(cliente.animales) ? cliente.animales : [];
       const matchNombre = normalizarTexto(cliente.nombre).includes(qTexto);
       const matchCedula = qCedula ? normalizarCedula(cliente.cedula).includes(qCedula) : false;
+      const matchSocio = normalizarTexto(cliente.numero_socio).includes(qTexto) || (qCedula ? normalizarCedula(cliente.numero_socio).includes(qCedula) : false);
       const animalMatch = animales.find(a => normalizarTexto(a).includes(qTexto)) || null;
-      return { cliente, matchNombre, matchCedula, animalMatch };
-    }).filter(x => x.matchNombre || x.matchCedula || x.animalMatch)
+      return { cliente, matchNombre, matchCedula, matchSocio, animalMatch };
+    }).filter(x => x.matchNombre || x.matchCedula || x.matchSocio || x.animalMatch)
       .sort((a, b) => {
         const score = (x) => {
           let s = 0;
@@ -289,6 +291,7 @@ const BASE = {{ clientes|tojson }}; // [{id, nombre, cedula, animales}, ...]
           if(x.animalMatch && normalizarTexto(x.animalMatch) === qTexto) s += 80;
           if(x.matchNombre) s += 20;
           if(x.matchCedula) s += 15;
+          if(x.matchSocio) s += 18;
           if(x.animalMatch) s += 10;
           return s;
         };
