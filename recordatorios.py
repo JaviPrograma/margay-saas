@@ -27,6 +27,7 @@ CLINICA = "VetCloud"
 BATCH_SIZE = 20
 PAUSA_ENTRE_ENVIOS = 0.6
 LAST_TICK = None
+TEST_MODE = (os.environ.get('VETCLOUD_TEST_MODE') or '').strip() == '1'
 
 
 def db_conn(timeout=30):
@@ -108,6 +109,9 @@ def _migrate_reminder_config_if_needed(conn):
         mensual_template TEXT,
         mensual_hora TEXT DEFAULT '10:00',
         mensual_dia_mes INTEGER DEFAULT 1,
+        mora3_enabled INTEGER DEFAULT 0,
+        mora3_template TEXT,
+        mora3_hora TEXT DEFAULT '10:00',
         vacunas_enabled INTEGER DEFAULT 1,
         vacunas_template TEXT,
         vacunas_hora TEXT DEFAULT '10:00',
@@ -165,6 +169,9 @@ def init_tables():
         mensual_template TEXT,
         mensual_hora TEXT DEFAULT '10:00',
         mensual_dia_mes INTEGER DEFAULT 1,
+        mora3_enabled INTEGER DEFAULT 0,
+        mora3_template TEXT,
+        mora3_hora TEXT DEFAULT '10:00',
         vacunas_enabled INTEGER DEFAULT 1,
         vacunas_template TEXT,
         vacunas_hora TEXT DEFAULT '10:00',
@@ -218,6 +225,10 @@ def init_tables():
     _ensure_column(cur, 'reminder_config', 'mensual_template', "mensual_template TEXT")
     _ensure_column(cur, 'reminder_config', 'mensual_hora', "mensual_hora TEXT DEFAULT '10:00'")
     _ensure_column(cur, 'reminder_config', 'mensual_dia_mes', "mensual_dia_mes INTEGER DEFAULT 1")
+    _mora3_era_nuevo = 'mora3_enabled' not in [r[1] for r in cur.execute("PRAGMA table_info(reminder_config)").fetchall()]
+    _ensure_column(cur, 'reminder_config', 'mora3_enabled', "mora3_enabled INTEGER DEFAULT 0")
+    _ensure_column(cur, 'reminder_config', 'mora3_template', "mora3_template TEXT")
+    _ensure_column(cur, 'reminder_config', 'mora3_hora', "mora3_hora TEXT DEFAULT '10:00'")
     _ensure_column(cur, 'reminder_config', 'vacunas_enabled', "vacunas_enabled INTEGER DEFAULT 1")
     _ensure_column(cur, 'reminder_config', 'vacunas_template', "vacunas_template TEXT")
     _ensure_column(cur, 'reminder_config', 'vacunas_hora', "vacunas_hora TEXT DEFAULT '10:00'")
@@ -265,6 +276,16 @@ def init_tables():
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_vacuna ON reminder_queue(empresa_id, tipo, vacuna_id, referencia_fecha)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_despa ON reminder_queue(empresa_id, tipo, animal_id, referencia_fecha)")
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_part ON reminder_queue(empresa_id, tipo, cliente_id, referencia_fecha)")
+    if _mora3_era_nuevo:
+        try:
+            cur.execute("""
+                UPDATE reminder_config
+                   SET mora3_enabled=1,
+                       mora3_template=COALESCE(NULLIF(mora3_template,''), 'Hola {CLIENTE}, registramos {MESES_IMPAGOS} mensualidades consecutivas vencidas. Si no regularizás tu situación, tu mensualidad será dada de baja. Por favor comunicate con la veterinaria para regularizar.')
+                 WHERE empresa_id IN (SELECT id FROM empresas WHERE COALESCE(modo_socios,0)=1)
+            """)
+        except Exception:
+            pass
     conn.commit(); conn.close()
 
 
@@ -340,6 +361,8 @@ def _enqueue(conn, empresa_id, tipo, cliente_id=None, animal_id=None, vacuna_id=
 
 
 def _smtp_send(cfg, to_email, subject, body):
+    if TEST_MODE:
+        raise RuntimeError('Modo de prueba local: el envío de correos está deshabilitado.')
     if not cfg['smtp_host'] or not cfg['smtp_from']:
         raise RuntimeError('Falta configurar SMTP y remitente.')
     msg = EmailMessage()
@@ -409,6 +432,102 @@ def _gen_mensual_auto(conn, empresa_id, today, cfg):
             empresa=clinica,
         )
         _enqueue(conn, empresa_id, 'mensual', cliente_id=r['id'], referencia_fecha=referencia, email_destino=r['email'], asunto=asunto, mensaje=msg, programado_en=programado)
+
+
+def _mes_anterior(anio, mes):
+    if mes == 1:
+        return anio - 1, 12
+    return anio, mes - 1
+
+def _gen_mora3_auto(conn, empresa_id, today, cfg):
+    """Aviso automático por 3+ mensualidades consecutivas impagas, solo para empresas modo socios.
+
+    No da de baja ni borra al cliente. Genera un aviso de regularización y evita repetirlo
+    cada mes mientras siga siendo la misma racha de deuda.
+    """
+    try:
+        emp = conn.execute("SELECT COALESCE(modo_socios,0) AS modo FROM empresas WHERE id=?", (empresa_id,)).fetchone()
+        if not emp or not int(emp['modo'] or 0):
+            return
+    except Exception:
+        return
+    try:
+        enabled = int(cfg['mora3_enabled'] or 0)
+    except Exception:
+        enabled = 0
+    if not enabled:
+        return
+
+    clinica = _empresa_nombre(conn, empresa_id)
+    try:
+        hora = cfg['mora3_hora'] or '10:00'
+    except Exception:
+        hora = '10:00'
+    programado = _dt_on(today, hora).strftime('%Y-%m-%d %H:%M')
+    try:
+        tpl = cfg['mora3_template'] or ''
+    except Exception:
+        tpl = ''
+    if not tpl:
+        tpl = ('Hola {CLIENTE}, registramos {MESES_IMPAGOS} mensualidades consecutivas vencidas. '
+               'Si no regularizás tu situación, tu mensualidad será dada de baja. '
+               'Por favor comunicate con la veterinaria para regularizar.')
+
+    clientes = conn.execute("""
+        SELECT id, nombre, email, fecha_afiliacion
+          FROM clientes
+         WHERE empresa_id=? AND tipo='Mensual' AND COALESCE(activo,1)=1 AND COALESCE(email,'')<>''
+         ORDER BY id
+    """, (empresa_id,)).fetchall()
+
+    for c in clientes:
+        # No contar meses anteriores al alta como deuda.
+        try:
+            alta = dt.datetime.strptime((c['fecha_afiliacion'] or '')[:10], '%Y-%m-%d').date()
+            alta_key = alta.year * 12 + alta.month
+        except Exception:
+            alta_key = None
+
+        # Solo contar meses que ya vencieron. Usamos el mismo día configurado para el
+        # recordatorio mensual como umbral del vencimiento. Si todavía no llegó ese día
+        # en el mes actual, comenzamos a contar desde el mes anterior.
+        try:
+            dia_vencimiento = max(1, min(28, int(cfg['mensual_dia_mes'] or 1)))
+        except Exception:
+            dia_vencimiento = 1
+        anio, mes = today.year, today.month
+        if today.day < dia_vencimiento:
+            anio, mes = _mes_anterior(anio, mes)
+
+        racha = []
+        for _ in range(36):
+            key = anio * 12 + mes
+            if alta_key is not None and key < alta_key:
+                break
+            pago = conn.execute(
+                "SELECT pagado FROM mensualidades WHERE cliente_id=? AND empresa_id=? AND anio=? AND mes=? LIMIT 1",
+                (c['id'], empresa_id, anio, mes),
+            ).fetchone()
+            # Si el mes venció y no hay registro, para un cliente Mensual activo cuenta como impago.
+            if pago and int(pago['pagado'] or 0) == 1:
+                break
+            racha.append((anio, mes))
+            anio, mes = _mes_anterior(anio, mes)
+
+        if len(racha) < 3:
+            continue
+        inicio_anio, inicio_mes = racha[-1]
+        referencia = f"{inicio_anio:04d}-{inicio_mes:02d}"
+        asunto = f"{clinica} - Aviso por 3 meses de mensualidad impaga"
+        msg = _render_placeholders(
+            tpl,
+            cliente=c['nombre'],
+            meses_impagos=str(len(racha)),
+            desde=f"{inicio_mes:02d}/{inicio_anio}",
+            empresa=clinica,
+        )
+        _enqueue(conn, empresa_id, 'mensual_3_meses', cliente_id=c['id'], referencia_fecha=referencia,
+                 email_destino=c['email'], asunto=asunto, mensaje=msg, programado_en=programado)
 
 
 def _gen_vacunas_auto(conn, empresa_id, today, cfg):
@@ -521,6 +640,7 @@ def _auto_generate_tasks_if_needed():
         if not cfg:
             continue
         _gen_mensual_auto(conn, empresa_id, today, cfg)
+        _gen_mora3_auto(conn, empresa_id, today, cfg)
         _gen_vacunas_auto(conn, empresa_id, today, cfg)
         _gen_despa_auto(conn, empresa_id, today, cfg)
         _gen_part_impagos_auto(conn, empresa_id, today, cfg)
@@ -578,7 +698,8 @@ def start_scheduler():
 
 
 init_tables()
-start_scheduler()
+if not TEST_MODE:
+    start_scheduler()
 
 @bp.after_request
 def _no_cache(resp):
@@ -605,6 +726,11 @@ def dashboard():
     ensure_empresa_config(emp)
     conn = db_conn()
     cfg = conn.execute('SELECT * FROM reminder_config WHERE empresa_id=?', (emp,)).fetchone()
+    try:
+        erow = conn.execute('SELECT COALESCE(modo_socios,0) AS modo_socios FROM empresas WHERE id=?', (emp,)).fetchone()
+        modo_socios = bool(erow and erow['modo_socios'])
+    except Exception:
+        modo_socios = False
     pendientes = conn.execute("""
         SELECT q.*, c.nombre AS cliente_nombre
         FROM reminder_queue q
@@ -622,7 +748,7 @@ def dashboard():
     pend = [dict(r) | {'cliente_doc': _cliente_doc(conn, r['cliente_id']) if r['cliente_id'] else ''} for r in pendientes]
     env = [dict(r) | {'cliente_doc': _cliente_doc(conn, r['cliente_id']) if r['cliente_id'] else ''} for r in enviados]
     conn.close()
-    return render_template('recordatorios.html', cfg=cfg, pendientes=pend, enviados=env)
+    return render_template('recordatorios.html', cfg=cfg, pendientes=pend, enviados=env, modo_socios=modo_socios)
 
 
 @bp.route('/config', methods=['POST'])
@@ -638,6 +764,9 @@ def config():
         'mensual_template': (f.get('mensual_template') or '').strip(),
         'mensual_hora': (f.get('mensual_hora') or '10:00').strip(),
         'mensual_dia_mes': int(f.get('mensual_dia_mes') or 1),
+        'mora3_enabled': 1 if f.get('mora3_enabled') else 0,
+        'mora3_template': (f.get('mora3_template') or '').strip(),
+        'mora3_hora': (f.get('mora3_hora') or '10:00').strip(),
         'vacunas_enabled': 1 if f.get('vacunas_enabled') else 0,
         'vacunas_template': (f.get('vacunas_template') or '').strip(),
         'vacunas_hora': (f.get('vacunas_hora') or '10:00').strip(),
@@ -666,12 +795,14 @@ def config():
     cur.execute("""
         INSERT INTO reminder_config (
             empresa_id, mensual_enabled, mensual_template, mensual_hora, mensual_dia_mes,
+            mora3_enabled, mora3_template, mora3_hora,
             vacunas_enabled, vacunas_template, vacunas_hora, vacunas_dias_antes,
             despa_enabled, despa_template, despa_hora, despa_dias_antes, despa_intervalo_dias,
             part_enabled, part_template, part_hora, part_dia_mes,
             smtp_host, smtp_port, smtp_user, smtp_pass, smtp_tls, smtp_ssl, smtp_from, smtp_from_name, test_email
         ) VALUES (
             :empresa_id, :mensual_enabled, :mensual_template, :mensual_hora, :mensual_dia_mes,
+            :mora3_enabled, :mora3_template, :mora3_hora,
             :vacunas_enabled, :vacunas_template, :vacunas_hora, :vacunas_dias_antes,
             :despa_enabled, :despa_template, :despa_hora, :despa_dias_antes, :despa_intervalo_dias,
             :part_enabled, :part_template, :part_hora, :part_dia_mes,
@@ -682,6 +813,9 @@ def config():
             mensual_template=excluded.mensual_template,
             mensual_hora=excluded.mensual_hora,
             mensual_dia_mes=excluded.mensual_dia_mes,
+            mora3_enabled=excluded.mora3_enabled,
+            mora3_template=excluded.mora3_template,
+            mora3_hora=excluded.mora3_hora,
             vacunas_enabled=excluded.vacunas_enabled,
             vacunas_template=excluded.vacunas_template,
             vacunas_hora=excluded.vacunas_hora,

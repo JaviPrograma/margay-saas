@@ -105,6 +105,14 @@ def current_empresa_id():
 def current_user_id():
     return session.get('user_id')
 
+def modo_atencion_directa_actual():
+    return bool(session.get('modo_atencion_directa', 0))
+
+def modo_socios_actual():
+    # Funciones específicas de la veterinaria que hoy usa acceso.demo.
+    # Se guarda por empresa, no por email de usuario, para que sobreviva al cambio de acceso.
+    return bool(session.get('modo_socios', 0))
+
 def current_empresa_id_resolved(conn=None):
     empresa_id = session.get('empresa_id')
     user_id = session.get('user_id')
@@ -328,7 +336,9 @@ def _saas_guard():
             user = conn.execute(
                 """
                 SELECT u.id, u.empresa_id, u.nombre, u.email, u.rol, u.activo,
-                       e.nombre AS empresa_nombre, e.activa AS empresa_activa
+                       e.nombre AS empresa_nombre, e.activa AS empresa_activa,
+                       COALESCE(e.modo_atencion_directa, 0) AS empresa_modo_atencion_directa,
+                       COALESCE(e.modo_socios, 0) AS empresa_modo_socios
                   FROM usuarios u
                   LEFT JOIN empresas e ON e.id = u.empresa_id
                  WHERE u.id=?
@@ -343,6 +353,8 @@ def _saas_guard():
             session['user_nombre'] = user['nombre']
             session['user_email'] = user['email']
             session['rol'] = user['rol']
+            session['modo_atencion_directa'] = int(user['empresa_modo_atencion_directa'] or 0)
+            session['modo_socios'] = int(user['empresa_modo_socios'] or 0)
             g.empresa_id = user['empresa_id']
             g.user_id = user['id']
     finally:
@@ -388,6 +400,18 @@ def init_db():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )""")
 
+    # Modos de trabajo por veterinaria. Son banderas de EMPRESA, no del correo del usuario.
+    # Se agregan de forma aditiva y solo se activan automáticamente durante esta primera migración.
+    # De esa manera, cuando acceso.demo cambie por un usuario definitivo de la misma empresa,
+    # conserva las funciones y todos los datos sin depender del email de acceso.
+    empresa_cols = {r['name'] for r in cur.execute("PRAGMA table_info(empresas)").fetchall()}
+    _modo_atencion_nuevo = 'modo_atencion_directa' not in empresa_cols
+    _modo_socios_nuevo = 'modo_socios' not in empresa_cols
+    if _modo_atencion_nuevo:
+        cur.execute("ALTER TABLE empresas ADD COLUMN modo_atencion_directa INTEGER DEFAULT 0")
+    if _modo_socios_nuevo:
+        cur.execute("ALTER TABLE empresas ADD COLUMN modo_socios INTEGER DEFAULT 0")
+
     cur.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -401,6 +425,37 @@ def init_db():
         UNIQUE(empresa_id, email),
         FOREIGN KEY(empresa_id) REFERENCES empresas(id)
     )""")
+
+    # Resolver UNA sola vez cuál es la veterinaria piloto a partir del usuario demo actual.
+    # Si el usuario cambia más adelante, las banderas ya quedan guardadas en empresas.
+    if _modo_atencion_nuevo or _modo_socios_nuevo:
+        piloto = cur.execute(
+            "SELECT empresa_id FROM usuarios WHERE lower(email)=lower(?) ORDER BY id DESC LIMIT 1",
+            ('acceso.demo@vetcloud.com.uy',),
+        ).fetchone()
+        if not piloto:
+            piloto = cur.execute(
+                "SELECT id AS empresa_id FROM empresas WHERE slug=? ORDER BY id LIMIT 1",
+                ('acceso.demo',),
+            ).fetchone()
+        if piloto:
+            piloto_id = int(piloto['empresa_id'])
+            if _modo_atencion_nuevo:
+                cur.execute("UPDATE empresas SET modo_atencion_directa=1 WHERE id=?", (piloto_id,))
+            if _modo_socios_nuevo:
+                cur.execute("UPDATE empresas SET modo_socios=1 WHERE id=?", (piloto_id,))
+                # recordatorios.py se importa antes de init_db(); si sus nuevas columnas ya existen,
+                # activamos el aviso de mora solo para la empresa piloto.
+                try:
+                    cur.execute("""
+                        UPDATE reminder_config
+                           SET mora3_enabled=1,
+                               mora3_template=COALESCE(NULLIF(mora3_template,''),
+                                   'Hola {CLIENTE}, registramos {MESES_IMPAGOS} mensualidades consecutivas vencidas. Si no regularizás tu situación, tu mensualidad será dada de baja. Por favor comunicate con la veterinaria para regularizar.')
+                         WHERE empresa_id=?
+                    """, (piloto_id,))
+                except Exception:
+                    pass
 
     # Doctores
     cur.execute("""
@@ -518,7 +573,9 @@ def init_db():
         "ALTER TABLE clientes ADD COLUMN email TEXT",
         "ALTER TABLE clientes ADD COLUMN activo INTEGER DEFAULT 1",
         "ALTER TABLE clientes ADD COLUMN cuota_mensual REAL",
-        "ALTER TABLE clientes ADD COLUMN fecha_afiliacion TEXT"
+        "ALTER TABLE clientes ADD COLUMN fecha_afiliacion TEXT",
+        "ALTER TABLE clientes ADD COLUMN numero_socio TEXT",
+        "ALTER TABLE clientes ADD COLUMN metodo_pago_mensualidad TEXT"
     ]:
         try: cur.execute(alter)
         except Exception: pass
@@ -546,10 +603,43 @@ def init_db():
     # Mensualidades: montos
     for alter in [
         "ALTER TABLE mensualidades ADD COLUMN monto_cuota REAL",
-        "ALTER TABLE mensualidades ADD COLUMN monto_pagado REAL DEFAULT 0"
+        "ALTER TABLE mensualidades ADD COLUMN monto_pagado REAL DEFAULT 0",
+        "ALTER TABLE mensualidades ADD COLUMN metodo_pago TEXT"
     ]:
         try: cur.execute(alter)
         except Exception: pass
+
+    # Historial de cobros de mensualidad. No reemplaza registros existentes; solo agrega trazabilidad.
+    try:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS mensualidad_pagos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mensualidad_id INTEGER NOT NULL,
+            cliente_id INTEGER NOT NULL,
+            empresa_id INTEGER NOT NULL,
+            fecha_pago TEXT NOT NULL,
+            monto REAL NOT NULL,
+            metodo_pago TEXT,
+            observacion TEXT,
+            anulado INTEGER DEFAULT 0,
+            FOREIGN KEY(mensualidad_id) REFERENCES mensualidades(id),
+            FOREIGN KEY(cliente_id) REFERENCES clientes(id)
+        )
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_mensualidad_pagos_empresa ON mensualidad_pagos(empresa_id, mensualidad_id, anulado)")
+    except Exception:
+        pass
+
+    # No se infieren números de socio desde la cédula: el campo nuevo comienza vacío
+    # y se completa únicamente con información real ingresada por la veterinaria.
+    try:
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_clientes_empresa_numero_socio
+                ON clientes(empresa_id, numero_socio)
+             WHERE numero_socio IS NOT NULL AND TRIM(numero_socio) <> ''
+        """)
+    except Exception:
+        pass
 
     # Feriados
     try:
@@ -1254,6 +1344,8 @@ def inject_saas_context():
         'user_rol': session.get('rol'),
         'is_margay_master': is_margay_master(),
         'is_master_admin': is_margay_master(),
+        'modo_atencion_directa': modo_atencion_directa_actual(),
+        'modo_socios': modo_socios_actual(),
     }
 
 @app.route("/")
@@ -1319,6 +1411,7 @@ def doctor_eliminar(id):
 def clientes():
     q_nombre = (request.args.get("nombre", "") or "").strip()
     q_cedula = (request.args.get("cedula", "") or "").strip()
+    q_socio  = (request.args.get("socio", "") or "").strip()
     q_tipo   = (request.args.get("tipo", "") or "").strip()
 
     conn = get_db()
@@ -1339,6 +1432,10 @@ def clientes():
         else:
             query += " AND COALESCE(cedula,'') LIKE ?"
             params.append(f"%{q_cedula}%")
+
+    if q_socio and modo_socios_actual():
+        query += " AND COALESCE(numero_socio,'') LIKE ?"
+        params.append(f"%{q_socio}%")
 
     if q_tipo in ("Mensual", "Particular"):
         query += " AND tipo = ?"
@@ -1362,7 +1459,7 @@ def clientes():
             cuotas_sugeridas[c['id']] = _calc_cuota_automatica(conn, c['id'])
 
     conn.close()
-    filtros = {"nombre": q_nombre, "cedula": q_cedula, "tipo": q_tipo}
+    filtros = {"nombre": q_nombre, "cedula": q_cedula, "socio": q_socio, "tipo": q_tipo}
     return render_template("clientes.html",
                            clientes=filas, cliente_edit=None, filtros=filtros,
                            matricula_pend=map_pend, cuotas_sugeridas=cuotas_sugeridas)
@@ -1376,6 +1473,8 @@ def cliente_nuevo():
     direccion = request.form.get("direccion", "").strip()
     email = (request.form.get("email", "") or "").strip().lower()
     cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
+    numero_socio = (request.form.get("numero_socio") or "").strip() if modo_socios_actual() else None
+    metodo_pago_mensualidad = (request.form.get("metodo_pago_mensualidad") or "").strip() if modo_socios_actual() else None
 
     conn = get_db()
 
@@ -1386,12 +1485,19 @@ def cliente_nuevo():
             flash("Ya existe un cliente con esa cédula.", "danger")
             return redirect(url_for("clientes"))
 
+    if numero_socio:
+        dup_socio = conn.execute("SELECT id FROM clientes WHERE empresa_id=? AND numero_socio=?", (current_empresa_id(), numero_socio)).fetchone()
+        if dup_socio:
+            conn.close()
+            flash("Ya existe un cliente con ese número de socio.", "danger")
+            return redirect(url_for("clientes"))
+
     try:
         fecha_af = datetime.now().strftime("%Y-%m-%d") if tipo == "Mensual" else None
         conn.execute(
-            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, empresa_id)
-               VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?)""",
-            (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, current_empresa_id()),
+            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, numero_socio, metodo_pago_mensualidad, empresa_id)
+               VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?)""",
+            (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, numero_socio, metodo_pago_mensualidad, current_empresa_id()),
         )
         cliente_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()['id']
 
@@ -1423,6 +1529,8 @@ def cliente_editar(id):
         direccion = request.form.get("direccion", "").strip()
         email = (request.form.get("email", "") or "").strip().lower()
         cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
+        numero_socio = (request.form.get("numero_socio") or "").strip() if modo_socios_actual() else None
+        metodo_pago_mensualidad = (request.form.get("metodo_pago_mensualidad") or "").strip() if modo_socios_actual() else None
 
         prev = conn.execute("SELECT tipo FROM clientes WHERE id=? AND empresa_id=?", (id, current_empresa_id())).fetchone()
         prev_tipo = prev['tipo'] if prev else None
@@ -1434,17 +1542,33 @@ def cliente_editar(id):
                 flash("Ya existe otro cliente con esa cédula.", "danger")
                 return redirect(url_for("clientes"))
 
+        if numero_socio:
+            dup_socio = conn.execute("SELECT id FROM clientes WHERE empresa_id=? AND numero_socio=? AND id<>?", (current_empresa_id(), numero_socio, id)).fetchone()
+            if dup_socio:
+                conn.close()
+                flash("Ya existe otro cliente con ese número de socio.", "danger")
+                return redirect(url_for("clientes"))
+
         try:
             fecha_af = None
             if prev_tipo != "Mensual" and tipo == "Mensual":
                 fecha_af = datetime.now().strftime("%Y-%m-%d")
 
-            conn.execute(
-                """UPDATE clientes
-                   SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
-                   WHERE id=?""",
-                (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, id),
-            )
+            if modo_socios_actual():
+                conn.execute(
+                    """UPDATE clientes
+                       SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?,
+                           fecha_afiliacion=COALESCE(fecha_afiliacion, ?), numero_socio=?, metodo_pago_mensualidad=?
+                       WHERE id=? AND empresa_id=?""",
+                    (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, numero_socio, metodo_pago_mensualidad, id, current_empresa_id()),
+                )
+            else:
+                conn.execute(
+                    """UPDATE clientes
+                       SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?, fecha_afiliacion=COALESCE(fecha_afiliacion, ?)
+                       WHERE id=? AND empresa_id=?""",
+                    (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, id, current_empresa_id()),
+                )
 
             if prev_tipo != "Mensual" and tipo == "Mensual":
                 existe_pend = conn.execute("SELECT 1 FROM matriculas WHERE cliente_id=? AND pagado=0", (id,)).fetchone()
@@ -1469,7 +1593,7 @@ def cliente_editar(id):
     conn.close()
     if cliente is None:
         abort(404)
-    return render_template("clientes.html", clientes=[], cliente_edit=cliente, filtros={"nombre":"", "cedula":"", "tipo":""}, matricula_pend={}, cuotas_sugeridas={})
+    return render_template("clientes.html", clientes=[], cliente_edit=cliente, filtros={"nombre":"", "cedula":"", "socio":"", "tipo":""}, matricula_pend={}, cuotas_sugeridas={})
 
 @app.route("/clientes/eliminar/<int:id>")
 def cliente_eliminar(id):
@@ -1706,6 +1830,23 @@ def historia_editar(historia_id):
             tuple(datos + [row["animal_empresa_id"], historia_id, row["animal_id_real"]]),
         )
 
+        # Todas las veterinarias pueden corregir el profesional que figura como "Atendido por".
+        # No se borra ni recrea la historia; solo se actualiza el doctor de esa historia clínica.
+        doctor_id = request.form.get("doctor_id", type=int)
+        if doctor_id:
+            doctor_ok = conn.execute(
+                "SELECT id FROM doctores WHERE id=? AND empresa_id=?",
+                (doctor_id, current_empresa_id()),
+            ).fetchone()
+            if doctor_ok:
+                # Se corrige únicamente "Atendido por" de esta historia clínica.
+                # No se modifica la cita/agenda original, para no alterar información histórica
+                # de otros módulos al corregir una historia.
+                conn.execute(
+                    "UPDATE historia_clinica SET doctor_id=? WHERE id=? AND animal_id=?",
+                    (doctor_id, historia_id, row["animal_id_real"]),
+                )
+
         # Quitar adjuntos solo desvincula de esta historia. No borra el archivo físico.
         quitar = request.form.getlist("quitar_adjunto")
         for adj_id in quitar:
@@ -1743,8 +1884,61 @@ def historia_editar(historia_id):
         "SELECT id, filename FROM imagenes_historia WHERE historia_id=? ORDER BY id",
         (historia_id,),
     ).fetchall()
+    doctores = conn.execute(
+        "SELECT id, nombre FROM doctores WHERE empresa_id=? ORDER BY nombre COLLATE NOCASE",
+        (current_empresa_id(),),
+    ).fetchall()
     conn.close()
-    return render_template("historia_editar.html", entry=row, adjuntos=adjuntos)
+    return render_template("historia_editar.html", entry=row, adjuntos=adjuntos, doctores=doctores)
+
+
+# -------- Impresión profesional de una atención individual (todas las veterinarias) --------
+@app.route("/historia/imprimir/<int:historia_id>")
+@require_auth
+def historia_imprimir(historia_id):
+    conn = get_db()
+    entry = conn.execute(
+        """
+        SELECT h.*,
+               an.nombre AS animal_nombre, an.especie, an.raza, an.fecha_nacimiento,
+               an.sexo, an.color, an.microchip,
+               c.nombre AS cliente_nombre, c.telefono AS cliente_telefono,
+               c.cedula AS cliente_cedula, c.direccion AS cliente_direccion,
+               d.nombre AS doctor_nombre,
+               e.nombre AS empresa_nombre
+          FROM historia_clinica h
+          JOIN animales an ON an.id=h.animal_id
+          LEFT JOIN clientes c ON c.id=an.cliente_id AND c.empresa_id=an.empresa_id
+          LEFT JOIN doctores d ON d.id=h.doctor_id AND d.empresa_id=an.empresa_id
+          JOIN empresas e ON e.id=an.empresa_id
+         WHERE h.id=? AND an.empresa_id=?
+        """,
+        (historia_id, current_empresa_id()),
+    ).fetchone()
+    if entry is None:
+        conn.close()
+        abort(404)
+
+    adjuntos = conn.execute(
+        "SELECT id, filename FROM imagenes_historia WHERE historia_id=? ORDER BY id",
+        (historia_id,),
+    ).fetchall()
+    conn.close()
+
+    fecha_impresa = entry["fecha"] or ""
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            fecha_impresa = datetime.strptime(entry["fecha"], fmt).strftime("%d/%m/%Y %H:%M" if "%H" in fmt else "%d/%m/%Y")
+            break
+        except Exception:
+            pass
+
+    return render_template(
+        "historia_imprimir.html",
+        entry=entry,
+        adjuntos=adjuntos,
+        fecha_impresa=fecha_impresa,
+    )
 
 # -------- Vacunas --------
 @app.route("/vacunas/<int:animal_id>")
@@ -1965,6 +2159,251 @@ def api_precio_cita():
     conn.close()
     return jsonify({"ok": True, "precio": precio})
 
+# -------- Atención directa (solo veterinarias con el modo habilitado) --------
+def _atencion_directa_seleccion(conn, empresa_id, cliente_id, animal_id, doctor_id, motivo_id):
+    """Valida y devuelve los datos de una atención directa sin escribir nada en la base."""
+    return conn.execute(
+        """
+        SELECT c.id AS cliente_id, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono,
+               c.direccion AS cliente_direccion,
+               an.id AS animal_id, an.nombre AS animal_nombre,
+               d.id AS doctor_id, d.nombre AS doctor_nombre,
+               m.id AS motivo_id, m.nombre AS motivo_nombre, m.tipo AS motivo_tipo,
+               COALESCE(m.genera_historia,1) AS motivo_genera_historia
+          FROM clientes c
+          JOIN animales an ON an.cliente_id=c.id AND an.empresa_id=c.empresa_id
+          JOIN doctores d ON d.id=? AND d.empresa_id=c.empresa_id
+          JOIN motivos m ON m.id=? AND m.empresa_id=c.empresa_id
+         WHERE c.id=? AND an.id=? AND c.empresa_id=?
+        """,
+        (doctor_id, motivo_id, cliente_id, animal_id, empresa_id),
+    ).fetchone()
+
+
+@app.route("/atender", methods=["GET", "POST"])
+@require_auth
+def atender_directo():
+    if not modo_atencion_directa_actual():
+        flash("Esta veterinaria utiliza el flujo normal de agenda.", "info")
+        return redirect(url_for("agenda_lista"))
+
+    conn = get_db()
+    empresa_id = current_empresa_id()
+
+    if request.method == "POST":
+        cliente_id = request.form.get("cliente_id", type=int)
+        animal_id = request.form.get("animal_id", type=int)
+        doctor_id = request.form.get("doctor_id", type=int)
+        motivo_id = request.form.get("motivo_id", type=int)
+        lugar = (request.form.get("lugar") or "Clinica").strip()
+        if lugar not in ("Clinica", "Domicilio"):
+            lugar = "Clinica"
+
+        seleccion = _atencion_directa_seleccion(
+            conn, empresa_id, cliente_id, animal_id, doctor_id, motivo_id
+        )
+        if not seleccion:
+            conn.close()
+            flash("Revisá cliente, mascota, doctor y motivo antes de atender.", "danger")
+            return redirect(url_for("atender_directo"))
+        if int(seleccion["motivo_genera_historia"] or 0) != 1:
+            conn.close()
+            flash("El motivo elegido no genera historia clínica.", "warning")
+            return redirect(url_for("atender_directo"))
+
+        try:
+            ahora_local = datetime.now(ZoneInfo(_get_browser_timezone()))
+        except Exception:
+            ahora_local = datetime.now(ZoneInfo("America/Montevideo"))
+
+        # Todavía NO se crea ninguna cita. La cita + historia se guardan juntas
+        # cuando el usuario presiona "Guardar historia" en la pantalla siguiente.
+        cita = dict(seleccion)
+        cita.update({
+            "fecha": ahora_local.strftime("%Y-%m-%d"),
+            "hora": ahora_local.strftime("%H:%M"),
+            "lugar": lugar,
+        })
+        conn.close()
+        return render_template(
+            "atender_cita.html",
+            cita=cita,
+            atencion_directa_nueva=True,
+            form_action=url_for("atender_directo_guardar"),
+        )
+
+    clientes_rows = conn.execute(
+        """
+        SELECT c.id, c.nombre, c.cedula, c.numero_socio,
+               COALESCE(GROUP_CONCAT(a.nombre, ' || '), '') AS animales
+          FROM clientes c
+          LEFT JOIN animales a
+                 ON a.cliente_id=c.id AND a.empresa_id=c.empresa_id
+         WHERE c.empresa_id=? AND COALESCE(c.activo,1)=1
+         GROUP BY c.id, c.nombre, c.cedula
+         ORDER BY c.nombre COLLATE NOCASE
+        """,
+        (empresa_id,),
+    ).fetchall()
+    clientes = []
+    for r in clientes_rows:
+        clientes.append({
+            "id": r["id"],
+            "nombre": r["nombre"],
+            "cedula": r["cedula"],
+            "numero_socio": r["numero_socio"],
+            "animales": [x.strip() for x in (r["animales"] or "").split(" || ") if x.strip()],
+        })
+
+    doctores = [dict(r) for r in conn.execute(
+        "SELECT id, nombre FROM doctores WHERE empresa_id=? ORDER BY nombre COLLATE NOCASE",
+        (empresa_id,),
+    ).fetchall()]
+    motivos = [dict(r) for r in conn.execute(
+        """
+        SELECT id, nombre, duracion_minutos
+          FROM motivos
+         WHERE empresa_id=? AND COALESCE(genera_historia,1)=1
+         ORDER BY nombre COLLATE NOCASE
+        """,
+        (empresa_id,),
+    ).fetchall()]
+    conn.close()
+
+    preset = {
+        "cliente_id": request.args.get("cliente_id", type=int),
+        "animal_id": request.args.get("animal_id", type=int),
+    }
+    return render_template(
+        "atender_directo.html",
+        clientes=clientes,
+        doctores=doctores,
+        motivos=motivos,
+        preset=preset,
+    )
+
+
+@app.route("/atender/guardar", methods=["POST"])
+@require_auth
+def atender_directo_guardar():
+    if not modo_atencion_directa_actual():
+        abort(403)
+
+    empresa_id = current_empresa_id()
+    cliente_id = request.form.get("cliente_id", type=int)
+    animal_id = request.form.get("animal_id", type=int)
+    doctor_id = request.form.get("doctor_id", type=int)
+    motivo_id = request.form.get("motivo_id", type=int)
+    lugar = (request.form.get("lugar") or "Clinica").strip()
+    if lugar not in ("Clinica", "Domicilio"):
+        lugar = "Clinica"
+
+    descripcion = (request.form.get("descripcion") or "").strip()
+    if not descripcion:
+        flash("La descripción/examen es obligatoria.", "warning")
+        return redirect(url_for(
+            "atender_directo",
+            cliente_id=cliente_id,
+            animal_id=animal_id,
+        ))
+
+    conn = get_db()
+    seleccion = _atencion_directa_seleccion(
+        conn, empresa_id, cliente_id, animal_id, doctor_id, motivo_id
+    )
+    if not seleccion or int(seleccion["motivo_genera_historia"] or 0) != 1:
+        conn.close()
+        flash("No se pudo validar la atención. No se guardó ningún dato.", "danger")
+        return redirect(url_for("atender_directo"))
+
+    try:
+        ahora_local = datetime.now(ZoneInfo(_get_browser_timezone()))
+    except Exception:
+        ahora_local = datetime.now(ZoneInfo("America/Montevideo"))
+    fecha = ahora_local.strftime("%Y-%m-%d")
+    hora = ahora_local.strftime("%H:%M")
+    fecha_historia = ahora_local.strftime("%Y-%m-%d %H:%M")
+
+    precio_cita = _precio_cita_calculado(conn, cliente_id, motivo_id, fecha, hora, lugar)
+    estado_pago = "Pagado" if precio_cita == 0 else "Debe"
+
+    peso_kg  = _to_float(request.form.get("peso_kg"))
+    temp_c   = _to_float(request.form.get("temp_c"))
+    fc       = request.form.get("fc") or None
+    fr       = request.form.get("fr") or None
+    mucosas  = (request.form.get("mucosas") or "").strip() or None
+    hidratacion = (request.form.get("hidratacion") or "").strip() or None
+    motivo_consulta = (request.form.get("motivo_consulta") or "").strip() or None
+    anamnesis = (request.form.get("anamnesis") or "").strip() or None
+    dx_presuntivo = (request.form.get("diagnostico_presuntivo") or "").strip() or None
+    dx_diferencial = (request.form.get("diagnostico_diferencial") or "").strip() or None
+    tratamiento = (request.form.get("tratamiento") or "").strip() or None
+    indicaciones = (request.form.get("indicaciones") or "").strip() or None
+    particularidades = (request.form.get("particularidades") or "").strip() or None
+    proxima_cita_texto = (request.form.get("proxima_cita") or "").strip() or None
+
+    cur = conn.cursor()
+    # La cita y la historia se crean dentro de la misma transacción. Si algo falla,
+    # SQLite no deja una cita incompleta o huérfana por haber entrado a "Atender".
+    cur.execute(
+        """
+        INSERT INTO agenda
+            (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id,
+             estado_pago, precio, lugar, atendida, empresa_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        """,
+        (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id,
+         estado_pago, precio_cita, lugar, empresa_id),
+    )
+    cita_id = cur.lastrowid
+
+    cur.execute(
+        """
+        INSERT INTO historia_clinica
+        (animal_id, fecha, descripcion,
+         peso_kg, temp_c, fc, fr, mucosas, hidratacion,
+         motivo_consulta, anamnesis,
+         diagnostico_presuntivo, diagnostico_diferencial,
+         tratamiento, indicaciones, particularidades,
+         proxima_cita, tipo_visita,
+         doctor_id, cita_id, empresa_id)
+        VALUES
+        (?, ?, ?,
+         ?, ?, ?, ?, ?, ?,
+         ?, ?,
+         ?, ?,
+         ?, ?, ?,
+         ?, ?, ?, ?, ?)
+        """,
+        (
+            animal_id, fecha_historia, descripcion,
+            peso_kg, temp_c, fc, fr, mucosas, hidratacion,
+            motivo_consulta, anamnesis,
+            dx_presuntivo, dx_diferencial,
+            tratamiento, indicaciones, particularidades,
+            proxima_cita_texto, seleccion["motivo_tipo"],
+            doctor_id, cita_id, empresa_id,
+        ),
+    )
+    historia_id = cur.lastrowid
+
+    if "imagen" in request.files:
+        for file in request.files.getlist("imagen"):
+            if file and file.filename:
+                filename = secure_filename(file.filename)
+                file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                cur.execute(
+                    "INSERT INTO imagenes_historia (historia_id, filename) VALUES (?, ?)",
+                    (historia_id, filename),
+                )
+
+    _actualizar_flag_deudor(conn, cliente_id)
+    conn.commit()
+    conn.close()
+    flash("Historia clínica registrada correctamente.", "success")
+    return redirect(url_for("historia", animal_id=animal_id))
+
+
 # -------- Agenda: NUEVA (prefill soportado) --------
 @app.route("/agenda/nueva", methods=["GET", "POST"])
 def agenda_nueva():
@@ -2034,14 +2473,14 @@ def agenda_nueva():
     # --- GET: armar datos para el form (JSON-serializable para buscador) ---
     conn = get_db()
     clientes_rows = conn.execute("""
-        SELECT c.id, c.nombre, c.cedula,
+        SELECT c.id, c.nombre, c.cedula, c.numero_socio,
                COALESCE(GROUP_CONCAT(a.nombre, ' || '), '') AS animales
         FROM clientes c
         LEFT JOIN animales a
                ON a.cliente_id = c.id
               AND a.empresa_id = c.empresa_id
         WHERE c.empresa_id = ?
-        GROUP BY c.id, c.nombre, c.cedula
+        GROUP BY c.id, c.nombre, c.cedula, c.numero_socio
         ORDER BY c.nombre COLLATE NOCASE
     """, (current_empresa_id(),)).fetchall()
     clientes = []
@@ -2051,6 +2490,7 @@ def agenda_nueva():
             "id": r["id"],
             "nombre": r["nombre"],
             "cedula": r["cedula"],
+            "numero_socio": r["numero_socio"],
             "animales": animales,
         })
 
@@ -2383,6 +2823,7 @@ def mensualidades():
     hoy = datetime.now()
     anio = int(request.values.get('anio', hoy.year))
     mes = int(request.values.get('mes', hoy.month))
+    buscar = (request.values.get('buscar') or '').strip()
     conn = get_db()
     empresa_id = current_empresa_id_resolved(conn)
 
@@ -2436,8 +2877,8 @@ def mensualidades():
     filas = cur.execute(
         """
         SELECT me.id AS mensualidad_id, me.cliente_id, me.anio, me.mes, me.pagado, me.fecha_pago,
-               me.monto_cuota, me.monto_pagado,
-               cl.nombre, cl.cedula, cl.telefono, cl.deudor, cl.activo
+               me.monto_cuota, me.monto_pagado, me.metodo_pago,
+               cl.nombre, cl.cedula, cl.numero_socio, cl.telefono, cl.deudor, cl.activo, cl.metodo_pago_mensualidad
           FROM mensualidades me
           JOIN clientes cl ON cl.id = me.cliente_id AND cl.empresa_id = me.empresa_id
          WHERE me.anio = ? AND me.mes = ? AND me.empresa_id = ? AND cl.empresa_id = ? AND cl.tipo='Mensual' AND cl.activo=1
@@ -2456,8 +2897,19 @@ def mensualidades():
         saldo = max(total - (r['monto_pagado'] or 0), 0)
         registros.append({**dict(r), 'extras': extras, 'total': total, 'saldo': saldo})
 
+    if buscar and modo_socios_actual():
+        q = buscar.casefold()
+        qdigits = re.sub(r'\D', '', buscar)
+        registros = [r for r in registros if (
+            q in (r.get('nombre') or '').casefold()
+            or q in (r.get('numero_socio') or '').casefold()
+            or q in (r.get('cedula') or '').casefold()
+            or (qdigits and qdigits in re.sub(r'\D', '', r.get('numero_socio') or ''))
+            or (qdigits and qdigits in re.sub(r'\D', '', r.get('cedula') or ''))
+        )]
+
     conn.close()
-    return render_template('mensualidades.html', registros=registros, anio=anio, mes=mes, puede_purgar=True, total_clientes=total_clientes)
+    return render_template('mensualidades.html', registros=registros, anio=anio, mes=mes, buscar=buscar, puede_purgar=True, total_clientes=total_clientes)
 
 
 @app.route('/mensualidades/toggle/<int:mensualidad_id>', methods=['POST'])
@@ -2465,7 +2917,6 @@ def mensualidades():
 def mensualidad_toggle(mensualidad_id):
     conn = get_db()
     empresa_id = current_empresa_id_resolved(conn)
-    conn = get_db()
     _sanear_facturacion_empresa(conn, empresa_id)
     cur = conn.cursor()
 
@@ -2485,11 +2936,21 @@ def mensualidad_toggle(mensualidad_id):
     total = (monto_cuota or 0) + (extras or 0)
 
     if me['pagado'] == 0:
+        data = request.get_json(silent=True) or request.form
+        metodo_pago = (data.get('metodo_pago') or '').strip()
+        if modo_socios_actual() and not metodo_pago:
+            conn.close()
+            return jsonify({'success': False, 'error': 'Seleccioná el método de pago.'}), 400
         fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
-        cur.execute("UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=? WHERE id=? AND empresa_id=?", (fecha_pago, total, mensualidad_id, empresa_id))
+        cur.execute("UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=?, metodo_pago=? WHERE id=? AND empresa_id=?", (fecha_pago, total, metodo_pago or me['metodo_pago'], mensualidad_id, empresa_id))
         cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (mensualidad_id, empresa_id))
+        if modo_socios_actual():
+            cur.execute("INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) VALUES (?, ?, ?, ?, ?, ?)", (mensualidad_id, me['cid'], empresa_id, fecha_pago, total, metodo_pago))
+            cur.execute("UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?", (metodo_pago, me['cid'], empresa_id))
     else:
-        cur.execute("UPDATE mensualidades SET pagado=0, fecha_pago=NULL, monto_pagado=0 WHERE id=? AND empresa_id=?", (mensualidad_id, empresa_id))
+        cur.execute("UPDATE mensualidades SET pagado=0, fecha_pago=NULL, monto_pagado=0, metodo_pago=NULL WHERE id=? AND empresa_id=?", (mensualidad_id, empresa_id))
+        if modo_socios_actual():
+            cur.execute("UPDATE mensualidad_pagos SET anulado=1 WHERE mensualidad_id=? AND empresa_id=? AND COALESCE(anulado,0)=0", (mensualidad_id, empresa_id))
         cur.execute(
             """
             UPDATE agenda
@@ -2512,11 +2973,13 @@ def mensualidades_registrar_pago(cliente_id):
     empresa_id = current_empresa_id_resolved(conn)
     hoy = datetime.now()
     anio, mes = hoy.year, hoy.month
-    conn = get_db()
     cur = conn.cursor()
 
-    cl = cur.execute('SELECT cuota_mensual FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
-    cuota = cl['cuota_mensual'] if cl and cl['cuota_mensual'] is not None else _calc_cuota_automatica(conn, cliente_id)
+    cl = cur.execute('SELECT cuota_mensual, metodo_pago_mensualidad FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
+    if not cl:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Cliente no encontrado'}), 404
+    cuota = cl['cuota_mensual'] if cl['cuota_mensual'] is not None else _calc_cuota_automatica(conn, cliente_id)
     cur.execute(
         """
         INSERT OR IGNORE INTO mensualidades (cliente_id, anio, mes, pagado, monto_cuota, monto_pagado, empresa_id)
@@ -2535,8 +2998,16 @@ def mensualidades_registrar_pago(cliente_id):
     ).fetchone()['s']
     total = (me['monto_cuota'] or 0) + (extras or 0)
 
+    data = request.get_json(silent=True) or request.form
+    metodo_pago = (data.get('metodo_pago') or (cl['metodo_pago_mensualidad'] if cl else '') or '').strip()
+    if modo_socios_actual() and not metodo_pago:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Seleccioná el método de pago.'}), 400
     fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
-    cur.execute('UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=? WHERE id=? AND empresa_id=?', (fecha_pago, total, me['id'], empresa_id))
+    cur.execute('UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=?, metodo_pago=? WHERE id=? AND empresa_id=?', (fecha_pago, total, metodo_pago or None, me['id'], empresa_id))
+    if modo_socios_actual():
+        cur.execute('INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) VALUES (?, ?, ?, ?, ?, ?)', (me['id'], cliente_id, empresa_id, fecha_pago, total, metodo_pago))
+        cur.execute('UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?', (metodo_pago, cliente_id, empresa_id))
     cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (me['id'], empresa_id))
 
     _actualizar_flag_deudor(conn, cliente_id)
@@ -2552,10 +3023,14 @@ def mensualidades_abonar(mensualidad_id):
     empresa_id = current_empresa_id_resolved(conn)
     data = request.get_json(force=True) if request.is_json else request.form
     monto = _to_float(data.get('monto'))
+    metodo_pago = (data.get('metodo_pago') or '').strip()
+    if modo_socios_actual() and not metodo_pago:
+        conn.close()
+        return jsonify({'success': False, 'error': 'Seleccioná el método de pago.'}), 400
     if monto is None or monto <= 0:
+        conn.close()
         return jsonify({'success': False, 'error': 'Monto inválido'}), 400
 
-    conn = get_db()
     cur = conn.cursor()
     me = cur.execute(
         "SELECT me.*, cl.cuota_mensual, cl.id AS cid FROM mensualidades me JOIN clientes cl ON cl.id=me.cliente_id AND cl.empresa_id=me.empresa_id WHERE me.id=? AND me.empresa_id=?",
@@ -2573,12 +3048,17 @@ def mensualidades_abonar(mensualidad_id):
     total = (monto_cuota or 0) + (extras or 0)
     nuevo_pagado = (me['monto_pagado'] or 0) + monto
 
+    fecha_pago_mov = datetime.now().strftime('%Y-%m-%d %H:%M')
     if nuevo_pagado >= total:
-        fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
-        cur.execute('UPDATE mensualidades SET monto_pagado=?, pagado=1, fecha_pago=? WHERE id=? AND empresa_id=?', (nuevo_pagado, fecha_pago, mensualidad_id, empresa_id))
+        fecha_pago = fecha_pago_mov
+        cur.execute('UPDATE mensualidades SET monto_pagado=?, pagado=1, fecha_pago=?, metodo_pago=? WHERE id=? AND empresa_id=?', (nuevo_pagado, fecha_pago, metodo_pago or me['metodo_pago'], mensualidad_id, empresa_id))
         cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (mensualidad_id, empresa_id))
     else:
-        cur.execute('UPDATE mensualidades SET monto_pagado=?, pagado=0 WHERE id=? AND empresa_id=?', (nuevo_pagado, mensualidad_id, empresa_id))
+        cur.execute('UPDATE mensualidades SET monto_pagado=?, pagado=0, metodo_pago=COALESCE(?, metodo_pago) WHERE id=? AND empresa_id=?', (nuevo_pagado, metodo_pago or None, mensualidad_id, empresa_id))
+
+    if modo_socios_actual():
+        cur.execute('INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) VALUES (?, ?, ?, ?, ?, ?)', (mensualidad_id, me['cid'], empresa_id, fecha_pago_mov, monto, metodo_pago))
+        cur.execute('UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?', (metodo_pago, me['cid'], empresa_id))
 
     _actualizar_flag_deudor(conn, me['cid'])
     conn.commit()
@@ -2614,7 +3094,6 @@ def mensualidades_anual():
     anio = int(request.args.get('anio', datetime.now().year))
     conn = get_db()
     empresa_id = current_empresa_id_resolved(conn)
-    conn = get_db()
     _sanear_facturacion_empresa(conn, empresa_id)
     _asegurar_mensualidades_anio(conn, anio)
     cur = conn.cursor()
@@ -2630,7 +3109,7 @@ def mensualidades_anual():
     ).fetchall()
     filas = cur.execute(
         """
-        SELECT me.id AS mensualidad_id, me.cliente_id, me.mes, me.pagado, me.fecha_pago
+        SELECT me.id AS mensualidad_id, me.cliente_id, me.mes, me.pagado, me.fecha_pago, me.metodo_pago
           FROM mensualidades me
           JOIN clientes cl ON cl.id = me.cliente_id
          WHERE me.anio = ? AND me.empresa_id = ? AND cl.empresa_id = ? AND cl.tipo='Mensual'
@@ -2652,7 +3131,6 @@ def mensualidades_cliente(cliente_id):
     anio = int(request.args.get('anio', datetime.now().year))
     conn = get_db()
     empresa_id = current_empresa_id_resolved(conn)
-    conn = get_db()
     _sanear_facturacion_empresa(conn, empresa_id)
     _asegurar_mensualidades_anio(conn, anio)
     cur = conn.cursor()
@@ -2664,7 +3142,7 @@ def mensualidades_cliente(cliente_id):
 
     regs = cur.execute(
         """
-        SELECT id AS mensualidad_id, mes, pagado, fecha_pago
+        SELECT id AS mensualidad_id, mes, pagado, fecha_pago, metodo_pago
           FROM mensualidades
          WHERE cliente_id=? AND anio=? AND empresa_id=?
          ORDER BY mes
@@ -2683,7 +3161,6 @@ def mensualidades_cliente(cliente_id):
 def mensualidad_gestionar(mensualidad_id):
     conn = get_db()
     empresa_id = current_empresa_id_resolved(conn)
-    conn = get_db()
     cur = conn.cursor()
 
     me = cur.execute(
@@ -2723,8 +3200,23 @@ def mensualidad_gestionar(mensualidad_id):
     total = (monto_cuota or 0) + (extras or 0)
     saldo = max(total - (me['monto_pagado'] or 0), 0)
 
+    pagos_mov = []
+    if modo_socios_actual():
+        pagos_mov = cur.execute(
+            """
+            SELECT id, fecha_pago, monto, metodo_pago, observacion, COALESCE(anulado,0) AS anulado
+              FROM mensualidad_pagos
+             WHERE mensualidad_id=? AND empresa_id=?
+             ORDER BY id DESC
+            """,
+            (mensualidad_id, empresa_id),
+        ).fetchall()
+
     conn.close()
-    return render_template('mensualidad_gestion.html', mensualidad=me, citas=citas, extras=extras, monto_cuota=monto_cuota, total=total, saldo=saldo)
+    return render_template(
+        'mensualidad_gestion.html', mensualidad=me, citas=citas, extras=extras,
+        monto_cuota=monto_cuota, total=total, saldo=saldo, pagos_mov=pagos_mov
+    )
 
 
 @app.route('/mensualidades/asignar_cita', methods=['POST'])
@@ -2800,6 +3292,7 @@ def particulares_resumen():
     mes = int(request.args.get('mes', hoy.month))
     q_nombre = (request.args.get('nombre') or '').strip()
     q_cedula = (request.args.get('cedula') or '').strip()
+    q_socio = (request.args.get('socio') or '').strip()
     conn = get_db()
     empresa_id = current_empresa_id_resolved(conn)
 
@@ -2814,10 +3307,13 @@ def particulares_resumen():
     if q_cedula:
         filtro_sql += ' AND c.cedula LIKE ?'
         params.append(f'%{q_cedula}%')
+    if q_socio and modo_socios_actual():
+        filtro_sql += " AND COALESCE(c.numero_socio,'') LIKE ?"
+        params.append(f'%{q_socio}%')
 
     filas = conn.execute(
         f"""
-        SELECT c.id, c.nombre, c.cedula, c.telefono,
+        SELECT c.id, c.nombre, c.cedula, c.numero_socio, c.telefono,
                COUNT(a.id) AS citas,
                COALESCE(SUM(COALESCE(a.precio,0)),0) AS total,
                COALESCE(SUM(CASE WHEN a.estado_pago='Pagado' THEN COALESCE(a.precio,0) ELSE 0 END),0) AS cobrado
@@ -2840,6 +3336,7 @@ def particulares_resumen():
             'id': r['id'],
             'nombre': r['nombre'],
             'cedula': r['cedula'],
+            'numero_socio': r['numero_socio'],
             'telefono': r['telefono'],
             'citas': r['citas'],
             'total': total,
@@ -2847,7 +3344,7 @@ def particulares_resumen():
             'saldo': max(total - cobrado, 0.0),
         })
 
-    return render_template('particulares_resumen.html', anio=anio, mes=mes, registros=registros, filtros={'nombre': q_nombre, 'cedula': q_cedula})
+    return render_template('particulares_resumen.html', anio=anio, mes=mes, registros=registros, filtros={'nombre': q_nombre, 'cedula': q_cedula, 'socio': q_socio})
 
 
 @app.route('/particulares/cliente/<int:cliente_id>')
