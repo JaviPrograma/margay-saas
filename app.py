@@ -575,7 +575,8 @@ def init_db():
         "ALTER TABLE clientes ADD COLUMN cuota_mensual REAL",
         "ALTER TABLE clientes ADD COLUMN fecha_afiliacion TEXT",
         "ALTER TABLE clientes ADD COLUMN numero_socio TEXT",
-        "ALTER TABLE clientes ADD COLUMN metodo_pago_mensualidad TEXT"
+        "ALTER TABLE clientes ADD COLUMN metodo_pago_mensualidad TEXT",
+        "ALTER TABLE clientes ADD COLUMN deuda_nota TEXT"
     ]:
         try: cur.execute(alter)
         except Exception: pass
@@ -1602,6 +1603,45 @@ def cliente_eliminar(id):
     conn.commit()
     conn.close()
     return redirect(url_for("clientes"))
+
+@app.route("/clientes/deuda/<int:id>", methods=["GET", "POST"])
+def cliente_deuda_manual(id):
+    # Función exclusiva de la veterinaria con modo socios (empresa piloto).
+    if not modo_socios_actual():
+        abort(404)
+
+    conn = get_db()
+    try:
+        cliente = conn.execute(
+            "SELECT id, nombre, cedula, numero_socio, deuda_nota FROM clientes WHERE id=? AND empresa_id=?",
+            (id, current_empresa_id()),
+        ).fetchone()
+        if cliente is None:
+            abort(404)
+
+        if request.method == "POST":
+            accion = (request.form.get("accion") or "guardar").strip().lower()
+            if accion == "eliminar":
+                conn.execute(
+                    "UPDATE clientes SET deuda_nota=NULL WHERE id=? AND empresa_id=?",
+                    (id, current_empresa_id()),
+                )
+                conn.commit()
+                flash("Nota de deuda eliminada.", "success")
+            else:
+                nota = (request.form.get("deuda_nota") or "").strip()
+                conn.execute(
+                    "UPDATE clientes SET deuda_nota=? WHERE id=? AND empresa_id=?",
+                    (nota or None, id, current_empresa_id()),
+                )
+                conn.commit()
+                flash("Nota de deuda guardada.", "success")
+            return redirect(url_for("cliente_deuda_manual", id=id))
+
+        return render_template("cliente_deuda.html", cliente=cliente)
+    finally:
+        conn.close()
+
 
 @app.route("/clientes/baja_deuda/<int:id>", methods=["POST"])
 def cliente_baja_deuda(id):
