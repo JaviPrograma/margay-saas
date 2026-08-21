@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+          <div>
+            <h3 class="mb-1">Deuda / observación</h3>
+            <div class="text-muted">
+              <strong>{{ cliente['nombre'] }}</strong>
+              {% if cliente['numero_socio'] %} · Socio N.º {{ cliente['numero_socio'] }}{% endif %}
+              {% if cliente['cedula'] %} · C.I. {{ cliente['cedula'] }}{% endif %}
+            </div>
+          </div>
+          <a href="{{ url_for('clientes') }}" class="btn btn-outline-secondary">Volver</a>
+        </div>
+
+        <div class="alert alert-light border">
+          Esta nota es libre y no modifica la facturación, las mensualidades ni el estado del cliente.
+        </div>
+
+        <form method="POST">
+          <div class="mb-3">
+            <label for="deuda_nota" class="form-label">Detalle de deuda / observación</label>
+            <textarea id="deuda_nota" name="deuda_nota" class="form-control" rows="8" placeholder="Escribí aquí lo que necesites dejar registrado sobre la deuda del cliente...">{{ cliente['deuda_nota'] or '' }}</textarea>
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="submit" name="accion" value="guardar" class="btn btn-primary">Guardar cambios</button>
+            {% if cliente['deuda_nota'] %}
+            <button type="submit" name="accion" value="eliminar" class="btn btn-danger" onclick="return confirm('¿Eliminar esta nota de deuda? El cliente no será eliminado.');">Eliminar deuda</button>
+            {% endif %}
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

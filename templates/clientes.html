@@ -140,6 +140,11 @@
           <td class="d-flex flex-wrap gap-1">
             <a class="btn btn-sm btn-primary" href="{{ url_for('cliente_editar', id=c['id']) }}">Editar</a>
             <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('animales', cliente_id=c['id']) }}">Animales</a>
+            {% if modo_socios %}
+              <a class="btn btn-sm btn-outline-warning" href="{{ url_for('cliente_deuda_manual', id=c['id']) }}">
+                Deuda{% if c['deuda_nota'] %} •{% endif %}
+              </a>
+            {% endif %}
 
             {# ——— Separación de facturación ——— #}
             {% if c['tipo'] == 'Mensual' %}
