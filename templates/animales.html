@@ -15,7 +15,7 @@
 
 <div class="card p-3 mb-4 shadow-sm">
   <h5>{{ animal_edit and 'Editar Animal' or 'Nuevo Animal' }}</h5>
-  <form method="POST" action="{{ animal_edit and url_for('animal_editar', id=animal_edit['id'], cliente_id=cliente['id'] if cliente else '') or url_for('animal_nuevo', cliente_id=cliente['id'] if cliente else '') }}">
+  <form method="POST" action="{{ animal_edit and url_for('animal_editar', id=animal_edit['id'], cliente_id=(cliente['id'] if cliente else animal_edit['cliente_id'])) or url_for('animal_nuevo', cliente_id=cliente['id'] if cliente else '') }}">
     <div class="mb-3">
       <label for="nombre" class="form-label">Nombre</label>
       <input id="nombre" name="nombre" type="text" class="form-control" required value="{{ animal_edit and animal_edit['nombre'] or '' }}">
@@ -38,7 +38,7 @@
     </div>
     <button type="submit" class="btn btn-primary">{{ animal_edit and 'Actualizar' or 'Agregar' }}</button>
     {% if animal_edit %}
-    <a href="{{ url_for('animales', cliente_id=cliente['id']) }}" class="btn btn-secondary ms-2">Cancelar</a>
+    <a href="{{ url_for('animales', cliente_id=(cliente['id'] if cliente else animal_edit['cliente_id'])) }}" class="btn btn-secondary ms-2">Cancelar</a>
     {% endif %}
   </form>
 </div>
