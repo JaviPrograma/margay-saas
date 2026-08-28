@@ -457,6 +457,40 @@ def init_db():
                 except Exception:
                     pass
 
+    # Activar la misma modalidad especial para la segunda veterinaria piloto (empresa independiente).
+    # Se identifica una sola vez por el usuario actual; luego las banderas quedan guardadas
+    # en empresas y no dependen de que el correo de acceso se mantenga en el futuro.
+    segundo_piloto = cur.execute(
+        "SELECT empresa_id FROM usuarios WHERE lower(email)=lower(?) ORDER BY id DESC LIMIT 1",
+        ('acceso.demo2@vetcloud.com.uy',),
+    ).fetchone()
+    if not segundo_piloto:
+        segundo_piloto = cur.execute(
+            "SELECT id AS empresa_id FROM empresas WHERE lower(slug)=lower(?) ORDER BY id LIMIT 1",
+            ('acceso.demo2vetcloud.com.uy',),
+        ).fetchone()
+    if segundo_piloto:
+        segundo_piloto_id = int(segundo_piloto['empresa_id'])
+        cur.execute(
+            "UPDATE empresas SET modo_atencion_directa=1, modo_socios=1 WHERE id=?",
+            (segundo_piloto_id,),
+        )
+        # Activar solamente el chequeo de 3 mensualidades. No copiamos SMTP ni
+        # ninguna configuración/dato de la empresa 5: cada veterinaria configura su correo.
+        try:
+            cur.execute(
+                """
+                UPDATE reminder_config
+                   SET mora3_enabled=1,
+                       mora3_template=COALESCE(NULLIF(mora3_template,''),
+                           'Hola {CLIENTE}, registramos {MESES_IMPAGOS} mensualidades consecutivas vencidas. Si no regularizás tu situación, tu mensualidad será dada de baja. Por favor comunicate con la veterinaria para regularizar.')
+                 WHERE empresa_id=?
+                """,
+                (segundo_piloto_id,),
+            )
+        except Exception:
+            pass
+
     # Doctores
     cur.execute("""
     CREATE TABLE IF NOT EXISTS doctores (
