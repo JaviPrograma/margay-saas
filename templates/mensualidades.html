@@ -55,7 +55,7 @@
           <th>Saldo ($)</th>
           <th>Estado</th>
           <th>Fecha pago</th>
-          {% if modo_socios %}<th>Método de pago</th>{% endif %}
+          {% if modo_socios %}<th>{{ 'Modalidad' if modo_cobro_especial else 'Método de pago' }}</th>{% endif %}
           <th>Acciones</th>
         </tr>
       </thead>
@@ -84,8 +84,9 @@
             {% else %}
               <select id="metodo-{{ r['mensualidad_id'] }}" class="form-select form-select-sm" style="min-width:145px">
                 <option value="">Seleccionar…</option>
-                {% set pref = r['metodo_pago_mensualidad'] or '' %}
-                {% for op in ['Efectivo','Tarjeta','Transferencia','Débito automático','Otro'] %}
+                {% set pref = (r['modalidad_cobro'] if modo_cobro_especial else r['metodo_pago_mensualidad']) or '' %}
+                {% set opciones_pago = modalidades_cobro_especial if modo_cobro_especial else ['Efectivo','Tarjeta','Transferencia','Débito automático','Otro'] %}
+                {% for op in opciones_pago %}
                   <option value="{{ op }}" {{ 'selected' if pref==op else '' }}>{{ op }}</option>
                 {% endfor %}
               </select>
@@ -110,7 +111,7 @@ async function togglePago(id, estabaPagado){
   if(!estabaPagado){
     const sel = document.getElementById('metodo-' + id);
     const metodo = sel ? sel.value : '';
-    if(!metodo){ alert('Seleccioná el método de pago.'); return; }
+    if(!metodo){ alert({{ "'Seleccioná la modalidad de cobro.'" if modo_cobro_especial else "'Seleccioná el método de pago.'" }}); return; }
     options.headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify({metodo_pago: metodo});
   }

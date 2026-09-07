@@ -40,14 +40,25 @@
         <input id="numero_socio" name="numero_socio" type="text" class="form-control" value="{{ cliente_edit and (cliente_edit['numero_socio'] or '') }}" placeholder="Ej: 00125">
       </div>
       <div class="col-md-4">
-        <label for="metodo_pago_mensualidad" class="form-label">Método habitual de pago</label>
-        {% set mp = (cliente_edit and cliente_edit['metodo_pago_mensualidad']) or '' %}
-        <select id="metodo_pago_mensualidad" name="metodo_pago_mensualidad" class="form-select">
-          <option value="" {{ 'selected' if not mp else '' }}>Sin definir</option>
-          {% for op in ['Efectivo','Tarjeta','Transferencia','Débito automático','Otro'] %}
-            <option value="{{ op }}" {{ 'selected' if mp==op else '' }}>{{ op }}</option>
-          {% endfor %}
-        </select>
+        {% if modo_cobro_especial %}
+          <label for="modalidad_cobro" class="form-label">Modalidad de cobro</label>
+          {% set mp = (cliente_edit and cliente_edit['modalidad_cobro']) or '' %}
+          <select id="modalidad_cobro" name="modalidad_cobro" class="form-select">
+            <option value="" {{ 'selected' if not mp else '' }}>Sin definir</option>
+            {% for op in modalidades_cobro_especial %}
+              <option value="{{ op }}" {{ 'selected' if mp==op else '' }}>{{ op }}</option>
+            {% endfor %}
+          </select>
+        {% else %}
+          <label for="metodo_pago_mensualidad" class="form-label">Método habitual de pago</label>
+          {% set mp = (cliente_edit and cliente_edit['metodo_pago_mensualidad']) or '' %}
+          <select id="metodo_pago_mensualidad" name="metodo_pago_mensualidad" class="form-select">
+            <option value="" {{ 'selected' if not mp else '' }}>Sin definir</option>
+            {% for op in ['Efectivo','Tarjeta','Transferencia','Débito automático','Otro'] %}
+              <option value="{{ op }}" {{ 'selected' if mp==op else '' }}>{{ op }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
       </div>
       {% endif %}
 

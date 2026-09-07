@@ -25,7 +25,8 @@
           <th>Mes</th>
           <th>Estado</th>
           <th>Fecha de pago</th>
-          {% if modo_socios %}<th>Método de pago</th>{% endif %}
+          {% if modo_socios %}<th>{{ 'Modalidad' if modo_cobro_especial else 'Método de pago' }}</th>{% endif %}
+          {% if modo_cobro_especial %}<th>Acciones</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -41,11 +42,51 @@
             {% endif %}
           </td>
           <td id="f{{ reg and reg['mensualidad_id'] or '' }}">{{ reg and (reg['fecha_pago'] or '') }}</td>
-          {% if modo_socios %}<td>{{ reg and (reg['metodo_pago'] or 'Sin registrar') or '' }}</td>{% endif %}
+          {% if modo_socios %}
+          <td>
+            {% if modo_cobro_especial and reg and not reg['pagado'] %}
+              <select id="modalidad-cliente-{{ reg['mensualidad_id'] }}" class="form-select form-select-sm" style="min-width:155px">
+                <option value="">Seleccionar…</option>
+                {% set pref = cliente['modalidad_cobro'] or '' %}
+                {% for op in modalidades_cobro_especial %}
+                  <option value="{{ op }}" {{ 'selected' if pref==op else '' }}>{{ op }}</option>
+                {% endfor %}
+              </select>
+            {% else %}
+              {{ reg and (reg['metodo_pago'] or 'Sin registrar') or '' }}
+            {% endif %}
+          </td>
+          {% endif %}
+          {% if modo_cobro_especial %}
+          <td>
+            {% if reg %}
+              <button class="btn btn-sm btn-outline-primary" type="button" onclick="cambiarEstadoCliente({{ reg['mensualidad_id'] }}, {{ 'true' if reg['pagado'] else 'false' }})">Cambiar estado</button>
+            {% endif %}
+          </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
+{% if modo_cobro_especial %}
+<script>
+async function cambiarEstadoCliente(id, estabaPagado){
+  const options = { method:'POST', headers:{} };
+  if(!estabaPagado){
+    const sel = document.getElementById('modalidad-cliente-' + id);
+    const modalidad = sel ? sel.value : '';
+    if(!modalidad){ alert('Seleccioná la modalidad de cobro.'); return; }
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify({metodo_pago: modalidad});
+  }
+  const resp = await fetch(`{{ url_for('mensualidad_toggle', mensualidad_id=0) }}`.replace('0', id), options);
+  const data = await resp.json().catch(()=>({}));
+  if(!resp.ok){ alert(data.error || 'Error cambiando estado'); return; }
+  location.reload();
+}
+</script>
+{% endif %}
 {% endblock %}
