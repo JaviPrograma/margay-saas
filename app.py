@@ -113,6 +113,23 @@ def modo_socios_actual():
     # Se guarda por empresa, no por email de usuario, para que sobreviva al cambio de acceso.
     return bool(session.get('modo_socios', 0))
 
+# Facturación especial solicitada únicamente para las dos veterinarias demo.
+# La bandera queda guardada por empresa para no afectar a ninguna otra veterinaria.
+MODALIDADES_COBRO_ESPECIAL = ('Cobrador', 'Débito automático', 'En clínica')
+
+def modo_cobro_especial_actual():
+    return bool(session.get('modo_cobro_especial', 0))
+
+def _validar_modalidad_cobro(metodo_pago):
+    metodo_pago = (metodo_pago or '').strip()
+    if modo_cobro_especial_actual():
+        if metodo_pago not in MODALIDADES_COBRO_ESPECIAL:
+            return None, 'Seleccioná una modalidad: Cobrador, Débito automático o En clínica.'
+        return metodo_pago, None
+    if modo_socios_actual() and not metodo_pago:
+        return None, 'Seleccioná el método de pago.'
+    return metodo_pago, None
+
 def current_empresa_id_resolved(conn=None):
     empresa_id = session.get('empresa_id')
     user_id = session.get('user_id')
@@ -338,7 +355,8 @@ def _saas_guard():
                 SELECT u.id, u.empresa_id, u.nombre, u.email, u.rol, u.activo,
                        e.nombre AS empresa_nombre, e.activa AS empresa_activa,
                        COALESCE(e.modo_atencion_directa, 0) AS empresa_modo_atencion_directa,
-                       COALESCE(e.modo_socios, 0) AS empresa_modo_socios
+                       COALESCE(e.modo_socios, 0) AS empresa_modo_socios,
+                       COALESCE(e.modo_cobro_especial, 0) AS empresa_modo_cobro_especial
                   FROM usuarios u
                   LEFT JOIN empresas e ON e.id = u.empresa_id
                  WHERE u.id=?
@@ -355,6 +373,7 @@ def _saas_guard():
             session['rol'] = user['rol']
             session['modo_atencion_directa'] = int(user['empresa_modo_atencion_directa'] or 0)
             session['modo_socios'] = int(user['empresa_modo_socios'] or 0)
+            session['modo_cobro_especial'] = int(user['empresa_modo_cobro_especial'] or 0)
             g.empresa_id = user['empresa_id']
             g.user_id = user['id']
     finally:
@@ -407,10 +426,13 @@ def init_db():
     empresa_cols = {r['name'] for r in cur.execute("PRAGMA table_info(empresas)").fetchall()}
     _modo_atencion_nuevo = 'modo_atencion_directa' not in empresa_cols
     _modo_socios_nuevo = 'modo_socios' not in empresa_cols
+    _modo_cobro_especial_nuevo = 'modo_cobro_especial' not in empresa_cols
     if _modo_atencion_nuevo:
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_atencion_directa INTEGER DEFAULT 0")
     if _modo_socios_nuevo:
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_socios INTEGER DEFAULT 0")
+    if _modo_cobro_especial_nuevo:
+        cur.execute("ALTER TABLE empresas ADD COLUMN modo_cobro_especial INTEGER DEFAULT 0")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -490,6 +512,27 @@ def init_db():
             )
         except Exception:
             pass
+
+    # Facturación especial: activar EXCLUSIVAMENTE para las dos veterinarias solicitadas.
+    # Se resuelve por el usuario actual/slug y luego queda persistida en la empresa.
+    for _email_especial, _slug_especial in (
+        ('acceso.demo@vetcloud.com.uy', 'acceso.demo'),
+        ('acceso.demo2@vetcloud.com.uy', 'acceso.demo2vetcloud.com.uy'),
+    ):
+        _especial = cur.execute(
+            "SELECT empresa_id FROM usuarios WHERE lower(email)=lower(?) ORDER BY id DESC LIMIT 1",
+            (_email_especial,),
+        ).fetchone()
+        if not _especial:
+            _especial = cur.execute(
+                "SELECT id AS empresa_id FROM empresas WHERE lower(slug)=lower(?) ORDER BY id LIMIT 1",
+                (_slug_especial,),
+            ).fetchone()
+        if _especial:
+            cur.execute(
+                "UPDATE empresas SET modo_cobro_especial=1 WHERE id=?",
+                (int(_especial['empresa_id']),),
+            )
 
     # Doctores
     cur.execute("""
@@ -610,6 +653,7 @@ def init_db():
         "ALTER TABLE clientes ADD COLUMN fecha_afiliacion TEXT",
         "ALTER TABLE clientes ADD COLUMN numero_socio TEXT",
         "ALTER TABLE clientes ADD COLUMN metodo_pago_mensualidad TEXT",
+        "ALTER TABLE clientes ADD COLUMN modalidad_cobro TEXT",
         "ALTER TABLE clientes ADD COLUMN deuda_nota TEXT"
     ]:
         try: cur.execute(alter)
@@ -1381,6 +1425,8 @@ def inject_saas_context():
         'is_master_admin': is_margay_master(),
         'modo_atencion_directa': modo_atencion_directa_actual(),
         'modo_socios': modo_socios_actual(),
+        'modo_cobro_especial': modo_cobro_especial_actual(),
+        'modalidades_cobro_especial': MODALIDADES_COBRO_ESPECIAL,
     }
 
 @app.route("/")
@@ -1509,7 +1555,14 @@ def cliente_nuevo():
     email = (request.form.get("email", "") or "").strip().lower()
     cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
     numero_socio = (request.form.get("numero_socio") or "").strip() if modo_socios_actual() else None
-    metodo_pago_mensualidad = (request.form.get("metodo_pago_mensualidad") or "").strip() if modo_socios_actual() else None
+    if modo_cobro_especial_actual():
+        modalidad_cobro = (request.form.get("modalidad_cobro") or "").strip()
+        if modalidad_cobro and modalidad_cobro not in MODALIDADES_COBRO_ESPECIAL:
+            modalidad_cobro = None
+        metodo_pago_mensualidad = None
+    else:
+        modalidad_cobro = None
+        metodo_pago_mensualidad = (request.form.get("metodo_pago_mensualidad") or "").strip() if modo_socios_actual() else None
 
     conn = get_db()
 
@@ -1530,9 +1583,9 @@ def cliente_nuevo():
     try:
         fecha_af = datetime.now().strftime("%Y-%m-%d") if tipo == "Mensual" else None
         conn.execute(
-            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, numero_socio, metodo_pago_mensualidad, empresa_id)
-               VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?)""",
-            (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, numero_socio, metodo_pago_mensualidad, current_empresa_id()),
+            """INSERT INTO clientes (nombre, telefono, cedula, tipo, deudor, direccion, email, activo, cuota_mensual, fecha_afiliacion, numero_socio, metodo_pago_mensualidad, modalidad_cobro, empresa_id)
+               VALUES (?, ?, ?, ?, 0, ?, ?, 1, ?, ?, ?, ?, ?, ?)""",
+            (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, numero_socio, metodo_pago_mensualidad, modalidad_cobro, current_empresa_id()),
         )
         cliente_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()['id']
 
@@ -1565,7 +1618,14 @@ def cliente_editar(id):
         email = (request.form.get("email", "") or "").strip().lower()
         cuota_mensual = _to_float(request.form.get("cuota_mensual", ""))
         numero_socio = (request.form.get("numero_socio") or "").strip() if modo_socios_actual() else None
-        metodo_pago_mensualidad = (request.form.get("metodo_pago_mensualidad") or "").strip() if modo_socios_actual() else None
+        if modo_cobro_especial_actual():
+            modalidad_cobro = (request.form.get("modalidad_cobro") or "").strip()
+            if modalidad_cobro and modalidad_cobro not in MODALIDADES_COBRO_ESPECIAL:
+                modalidad_cobro = None
+            metodo_pago_mensualidad = None
+        else:
+            modalidad_cobro = None
+            metodo_pago_mensualidad = (request.form.get("metodo_pago_mensualidad") or "").strip() if modo_socios_actual() else None
 
         prev = conn.execute("SELECT tipo FROM clientes WHERE id=? AND empresa_id=?", (id, current_empresa_id())).fetchone()
         prev_tipo = prev['tipo'] if prev else None
@@ -1589,7 +1649,15 @@ def cliente_editar(id):
             if prev_tipo != "Mensual" and tipo == "Mensual":
                 fecha_af = datetime.now().strftime("%Y-%m-%d")
 
-            if modo_socios_actual():
+            if modo_cobro_especial_actual():
+                conn.execute(
+                    """UPDATE clientes
+                       SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?,
+                           fecha_afiliacion=COALESCE(fecha_afiliacion, ?), numero_socio=?, modalidad_cobro=?
+                       WHERE id=? AND empresa_id=?""",
+                    (nombre, telefono, cedula, tipo, direccion, email, cuota_mensual, fecha_af, numero_socio, modalidad_cobro, id, current_empresa_id()),
+                )
+            elif modo_socios_actual():
                 conn.execute(
                     """UPDATE clientes
                        SET nombre=?, telefono=?, cedula=?, tipo=?, direccion=?, email=?, cuota_mensual=?,
@@ -2952,7 +3020,8 @@ def mensualidades():
         """
         SELECT me.id AS mensualidad_id, me.cliente_id, me.anio, me.mes, me.pagado, me.fecha_pago,
                me.monto_cuota, me.monto_pagado, me.metodo_pago,
-               cl.nombre, cl.cedula, cl.numero_socio, cl.telefono, cl.deudor, cl.activo, cl.metodo_pago_mensualidad
+               cl.nombre, cl.cedula, cl.numero_socio, cl.telefono, cl.deudor, cl.activo,
+               cl.metodo_pago_mensualidad, cl.modalidad_cobro
           FROM mensualidades me
           JOIN clientes cl ON cl.id = me.cliente_id AND cl.empresa_id = me.empresa_id
          WHERE me.anio = ? AND me.mes = ? AND me.empresa_id = ? AND cl.empresa_id = ? AND cl.tipo='Mensual' AND cl.activo=1
@@ -3012,15 +3081,19 @@ def mensualidad_toggle(mensualidad_id):
     if me['pagado'] == 0:
         data = request.get_json(silent=True) or request.form
         metodo_pago = (data.get('metodo_pago') or '').strip()
-        if modo_socios_actual() and not metodo_pago:
+        metodo_pago, error_modalidad = _validar_modalidad_cobro(metodo_pago)
+        if error_modalidad:
             conn.close()
-            return jsonify({'success': False, 'error': 'Seleccioná el método de pago.'}), 400
+            return jsonify({'success': False, 'error': error_modalidad}), 400
         fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
         cur.execute("UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=?, metodo_pago=? WHERE id=? AND empresa_id=?", (fecha_pago, total, metodo_pago or me['metodo_pago'], mensualidad_id, empresa_id))
         cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (mensualidad_id, empresa_id))
         if modo_socios_actual():
             cur.execute("INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) VALUES (?, ?, ?, ?, ?, ?)", (mensualidad_id, me['cid'], empresa_id, fecha_pago, total, metodo_pago))
-            cur.execute("UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?", (metodo_pago, me['cid'], empresa_id))
+            if modo_cobro_especial_actual():
+                cur.execute("UPDATE clientes SET modalidad_cobro=? WHERE id=? AND empresa_id=?", (metodo_pago, me['cid'], empresa_id))
+            else:
+                cur.execute("UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?", (metodo_pago, me['cid'], empresa_id))
     else:
         cur.execute("UPDATE mensualidades SET pagado=0, fecha_pago=NULL, monto_pagado=0, metodo_pago=NULL WHERE id=? AND empresa_id=?", (mensualidad_id, empresa_id))
         if modo_socios_actual():
@@ -3049,7 +3122,7 @@ def mensualidades_registrar_pago(cliente_id):
     anio, mes = hoy.year, hoy.month
     cur = conn.cursor()
 
-    cl = cur.execute('SELECT cuota_mensual, metodo_pago_mensualidad FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
+    cl = cur.execute('SELECT cuota_mensual, metodo_pago_mensualidad, modalidad_cobro FROM clientes WHERE id=? AND empresa_id=?', (cliente_id, empresa_id)).fetchone()
     if not cl:
         conn.close()
         return jsonify({'success': False, 'error': 'Cliente no encontrado'}), 404
@@ -3073,15 +3146,20 @@ def mensualidades_registrar_pago(cliente_id):
     total = (me['monto_cuota'] or 0) + (extras or 0)
 
     data = request.get_json(silent=True) or request.form
-    metodo_pago = (data.get('metodo_pago') or (cl['metodo_pago_mensualidad'] if cl else '') or '').strip()
-    if modo_socios_actual() and not metodo_pago:
+    preferencia = (cl['modalidad_cobro'] if modo_cobro_especial_actual() else cl['metodo_pago_mensualidad']) if cl else ''
+    metodo_pago = (data.get('metodo_pago') or preferencia or '').strip()
+    metodo_pago, error_modalidad = _validar_modalidad_cobro(metodo_pago)
+    if error_modalidad:
         conn.close()
-        return jsonify({'success': False, 'error': 'Seleccioná el método de pago.'}), 400
+        return jsonify({'success': False, 'error': error_modalidad}), 400
     fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
     cur.execute('UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=?, metodo_pago=? WHERE id=? AND empresa_id=?', (fecha_pago, total, metodo_pago or None, me['id'], empresa_id))
     if modo_socios_actual():
         cur.execute('INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) VALUES (?, ?, ?, ?, ?, ?)', (me['id'], cliente_id, empresa_id, fecha_pago, total, metodo_pago))
-        cur.execute('UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?', (metodo_pago, cliente_id, empresa_id))
+        if modo_cobro_especial_actual():
+            cur.execute('UPDATE clientes SET modalidad_cobro=? WHERE id=? AND empresa_id=?', (metodo_pago, cliente_id, empresa_id))
+        else:
+            cur.execute('UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?', (metodo_pago, cliente_id, empresa_id))
     cur.execute("UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?", (me['id'], empresa_id))
 
     _actualizar_flag_deudor(conn, cliente_id)
@@ -3098,9 +3176,10 @@ def mensualidades_abonar(mensualidad_id):
     data = request.get_json(force=True) if request.is_json else request.form
     monto = _to_float(data.get('monto'))
     metodo_pago = (data.get('metodo_pago') or '').strip()
-    if modo_socios_actual() and not metodo_pago:
+    metodo_pago, error_modalidad = _validar_modalidad_cobro(metodo_pago)
+    if error_modalidad:
         conn.close()
-        return jsonify({'success': False, 'error': 'Seleccioná el método de pago.'}), 400
+        return jsonify({'success': False, 'error': error_modalidad}), 400
     if monto is None or monto <= 0:
         conn.close()
         return jsonify({'success': False, 'error': 'Monto inválido'}), 400
@@ -3132,7 +3211,10 @@ def mensualidades_abonar(mensualidad_id):
 
     if modo_socios_actual():
         cur.execute('INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) VALUES (?, ?, ?, ?, ?, ?)', (mensualidad_id, me['cid'], empresa_id, fecha_pago_mov, monto, metodo_pago))
-        cur.execute('UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?', (metodo_pago, me['cid'], empresa_id))
+        if modo_cobro_especial_actual():
+            cur.execute('UPDATE clientes SET modalidad_cobro=? WHERE id=? AND empresa_id=?', (metodo_pago, me['cid'], empresa_id))
+        else:
+            cur.execute('UPDATE clientes SET metodo_pago_mensualidad=? WHERE id=? AND empresa_id=?', (metodo_pago, me['cid'], empresa_id))
 
     _actualizar_flag_deudor(conn, me['cid'])
     conn.commit()
