@@ -36,6 +36,24 @@
       <label for="ultima_desparasitacion" class="form-label">Última desparasitación</label>
       <input id="ultima_desparasitacion" name="ultima_desparasitacion" type="date" class="form-control" value="{{ animal_edit and animal_edit['ultima_desparasitacion'] or '' }}">
     </div>
+
+    {% if modo_estado_animal and animal_edit %}
+    <div class="border rounded p-3 mb-3 bg-light">
+      <div class="mb-2">
+        <label for="estado_vida" class="form-label fw-semibold">Estado del animal</label>
+        <select id="estado_vida" name="estado_vida" class="form-select">
+          <option value="Vivo" {{ 'selected' if (animal_edit['estado_vida'] or 'Vivo') == 'Vivo' else '' }}>Vivo</option>
+          <option value="Difunto" {{ 'selected' if animal_edit['estado_vida'] == 'Difunto' else '' }}>Difunto</option>
+        </select>
+        <div class="form-text">Si el animal falleció, marcá <strong>Difunto</strong>. No se borra: conserva toda su historia clínica.</div>
+      </div>
+      <div id="bloque_fecha_fallecimiento" class="mb-0">
+        <label for="fecha_fallecimiento" class="form-label">Fecha de fallecimiento <span class="text-muted">(opcional)</span></label>
+        <input id="fecha_fallecimiento" name="fecha_fallecimiento" type="date" class="form-control" value="{{ animal_edit['fecha_fallecimiento'] or '' }}">
+      </div>
+    </div>
+    {% endif %}
+
     <button type="submit" class="btn btn-primary">{{ animal_edit and 'Actualizar' or 'Agregar' }}</button>
     {% if animal_edit %}
     <a href="{{ url_for('animales', cliente_id=(cliente['id'] if cliente else animal_edit['cliente_id'])) }}" class="btn btn-secondary ms-2">Cancelar</a>
@@ -51,33 +69,64 @@
       <th>Raza</th>
       <th>Fecha Nac.</th>
       <th>Últ. desparasitación</th>
+      {% if modo_estado_animal %}<th>Estado</th>{% endif %}
       <th>Acciones</th>
     </tr>
   </thead>
   <tbody>
     {% for animal in animales %}
-    <tr>
-      <td>{{ animal['nombre'] }}</td>
+    <tr class="{{ 'table-secondary' if modo_estado_animal and animal['estado_vida'] == 'Difunto' else '' }}">
+      <td>
+        {{ animal['nombre'] }}
+        {% if modo_estado_animal and animal['estado_vida'] == 'Difunto' %}<span class="badge bg-secondary ms-1">Difunto</span>{% endif %}
+      </td>
       <td>{{ animal['especie'] }}</td>
       <td>{{ animal['raza'] }}</td>
       <td>{{ animal['fecha_nacimiento'] }}</td>
       <td>{{ animal['ultima_desparasitacion'] or '' }}</td>
+      {% if modo_estado_animal %}
       <td>
-        {% if modo_atencion_directa %}
+        {% if animal['estado_vida'] == 'Difunto' %}
+          <span class="badge bg-secondary">Difunto</span>
+          {% if animal['fecha_fallecimiento'] %}<div class="small text-muted mt-1">{{ animal['fecha_fallecimiento'] }}</div>{% endif %}
+        {% else %}
+          <span class="badge bg-success">Vivo</span>
+        {% endif %}
+      </td>
+      {% endif %}
+      <td>
+        {% if modo_atencion_directa and (not modo_estado_animal or animal['estado_vida'] != 'Difunto') %}
         <a href="{{ url_for('atender_directo', cliente_id=cliente['id'], animal_id=animal['id']) }}" class="btn btn-sm btn-primary">🩺 Atender ahora</a>
         {% endif %}
         <a href="{{ url_for('historia', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-primary">Historia Clínica</a>
         <a href="{{ url_for('vacunas', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-success">Vacunas</a>
         <a href="{{ url_for('desparasitaciones', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-info">Desparasitación</a>
         <a href="{{ url_for('animal_editar', id=animal['id']) }}?cliente_id={{ cliente['id'] }}" class="btn btn-sm btn-warning">Editar</a>
-        <a href="{{ url_for('animal_eliminar', id=animal['id']) }}" class="btn btn-sm btn-danger" onclick="return confirm('¿Eliminar animal?')">Eliminar</a>
+        <a href="{{ url_for('animal_eliminar', id=animal['id']) }}" class="btn btn-sm btn-danger" onclick="return confirm('Esto elimina definitivamente el animal. Si falleció, NO lo elimines: usá Editar y marcá Difunto. ¿Eliminar de todas formas?')">Eliminar</a>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="6" class="text-center">No hay animales aún.</td></tr>
+    <tr><td colspan="{{ 7 if modo_estado_animal else 6 }}" class="text-center">No hay animales aún.</td></tr>
     {% endfor %}
   </tbody>
 </table>
 
 <a href="{{ url_for('clientes') }}" class="btn btn-secondary mt-3">⬅ Volver a Clientes</a>
+
+{% if modo_estado_animal and animal_edit %}
+<script>
+(function(){
+  const estado = document.getElementById('estado_vida');
+  const bloque = document.getElementById('bloque_fecha_fallecimiento');
+  const fecha = document.getElementById('fecha_fallecimiento');
+  function actualizar(){
+    const difunto = estado && estado.value === 'Difunto';
+    if (bloque) bloque.style.display = difunto ? '' : 'none';
+    if (!difunto && fecha) fecha.value = '';
+  }
+  if (estado) estado.addEventListener('change', actualizar);
+  actualizar();
+})();
+</script>
+{% endif %}
 {% endblock %}
