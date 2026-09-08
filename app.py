@@ -125,6 +125,11 @@ def modo_cola_espera_actual():
     # corresponde a las dos veterinarias demo solicitadas.
     return bool(session.get('modo_cola_espera', 0))
 
+def modo_estado_animal_actual():
+    # Estado Vivo/Difunto solicitado únicamente para las dos veterinarias demo.
+    # Es una bandera independiente para no cambiar la forma de trabajo del resto.
+    return bool(session.get('modo_estado_animal', 0))
+
 def _validar_modalidad_cobro(metodo_pago):
     metodo_pago = (metodo_pago or '').strip()
     if modo_cobro_especial_actual():
@@ -362,7 +367,8 @@ def _saas_guard():
                        COALESCE(e.modo_atencion_directa, 0) AS empresa_modo_atencion_directa,
                        COALESCE(e.modo_socios, 0) AS empresa_modo_socios,
                        COALESCE(e.modo_cobro_especial, 0) AS empresa_modo_cobro_especial,
-                       COALESCE(e.modo_cola_espera, 0) AS empresa_modo_cola_espera
+                       COALESCE(e.modo_cola_espera, 0) AS empresa_modo_cola_espera,
+                       COALESCE(e.modo_estado_animal, 0) AS empresa_modo_estado_animal
                   FROM usuarios u
                   LEFT JOIN empresas e ON e.id = u.empresa_id
                  WHERE u.id=?
@@ -381,6 +387,7 @@ def _saas_guard():
             session['modo_socios'] = int(user['empresa_modo_socios'] or 0)
             session['modo_cobro_especial'] = int(user['empresa_modo_cobro_especial'] or 0)
             session['modo_cola_espera'] = int(user['empresa_modo_cola_espera'] or 0)
+            session['modo_estado_animal'] = int(user['empresa_modo_estado_animal'] or 0)
             g.empresa_id = user['empresa_id']
             g.user_id = user['id']
     finally:
@@ -435,6 +442,7 @@ def init_db():
     _modo_socios_nuevo = 'modo_socios' not in empresa_cols
     _modo_cobro_especial_nuevo = 'modo_cobro_especial' not in empresa_cols
     _modo_cola_espera_nuevo = 'modo_cola_espera' not in empresa_cols
+    _modo_estado_animal_nuevo = 'modo_estado_animal' not in empresa_cols
     _cola_contador_nuevo = 'cola_contador' not in empresa_cols
     if _modo_atencion_nuevo:
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_atencion_directa INTEGER DEFAULT 0")
@@ -444,6 +452,8 @@ def init_db():
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_cobro_especial INTEGER DEFAULT 0")
     if _modo_cola_espera_nuevo:
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_cola_espera INTEGER DEFAULT 0")
+    if _modo_estado_animal_nuevo:
+        cur.execute("ALTER TABLE empresas ADD COLUMN modo_estado_animal INTEGER DEFAULT 0")
     # Contador persistente de tickets de sala de espera. No se reinicia por fecha:
     # únicamente cambia cuando la veterinaria usa el botón de reinicio manual.
     if _cola_contador_nuevo:
@@ -547,7 +557,7 @@ def init_db():
             # Ambas funciones son exclusivas de estas dos empresas: facturación
             # especial y sala de espera por orden de llegada.
             cur.execute(
-                "UPDATE empresas SET modo_cobro_especial=1, modo_cola_espera=1 WHERE id=?",
+                "UPDATE empresas SET modo_cobro_especial=1, modo_cola_espera=1, modo_estado_animal=1 WHERE id=?",
                 (int(_especial['empresa_id']),),
             )
 
@@ -834,9 +844,17 @@ def init_db():
         "ALTER TABLE animales ADD COLUMN senas_particulares TEXT",
         "ALTER TABLE animales ADD COLUMN ultima_desparasitacion TEXT",
         "ALTER TABLE animales ADD COLUMN ultima_vacunacion TEXT",
+        "ALTER TABLE animales ADD COLUMN estado_vida TEXT DEFAULT 'Vivo'",
+        "ALTER TABLE animales ADD COLUMN fecha_fallecimiento TEXT",
     ]:
         try: cur.execute(alter)
         except Exception: pass
+    # Todo animal existente se conserva y, si nunca tuvo estado, se considera Vivo.
+    # No se borra ni se transforma historia clínica alguna.
+    try:
+        cur.execute("UPDATE animales SET estado_vida='Vivo' WHERE estado_vida IS NULL OR TRIM(estado_vida)='' ")
+    except Exception:
+        pass
 
     # Campos extra en HISTORIA CLÍNICA (no obligatorios)
     for alter in [
@@ -1502,6 +1520,7 @@ def inject_saas_context():
         'modo_socios': modo_socios_actual(),
         'modo_cobro_especial': modo_cobro_especial_actual(),
         'modo_cola_espera': modo_cola_espera_actual(),
+        'modo_estado_animal': modo_estado_animal_actual(),
         'modalidades_cobro_especial': MODALIDADES_COBRO_ESPECIAL,
     }
 
@@ -1892,7 +1911,7 @@ def animal_nuevo(cliente_id):
     ultima_desparasitacion = request.form.get("ultima_desparasitacion", "").strip()
     conn = get_db()
     conn.execute(
-        "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, empresa_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, estado_vida, fecha_fallecimiento, empresa_id) VALUES (?, ?, ?, ?, ?, ?, 'Vivo', NULL, ?)",
         (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, current_empresa_id()),
     )
     conn.commit()
@@ -1908,10 +1927,22 @@ def animal_editar(id):
         raza = request.form.get("raza", "").strip()
         fecha_nacimiento = request.form.get("fecha_nacimiento", "").strip()
         ultima_desparasitacion = request.form.get("ultima_desparasitacion", "").strip()
-        conn.execute(
-            "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=?, ultima_desparasitacion=? WHERE id=? AND empresa_id=?",
-            (nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, id, current_empresa_id()),
-        )
+        if modo_estado_animal_actual():
+            estado_vida = (request.form.get("estado_vida") or "Vivo").strip()
+            if estado_vida not in ("Vivo", "Difunto"):
+                estado_vida = "Vivo"
+            fecha_fallecimiento = (request.form.get("fecha_fallecimiento") or "").strip() or None
+            if estado_vida == "Vivo":
+                fecha_fallecimiento = None
+            conn.execute(
+                "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=?, ultima_desparasitacion=?, estado_vida=?, fecha_fallecimiento=? WHERE id=? AND empresa_id=?",
+                (nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, estado_vida, fecha_fallecimiento, id, current_empresa_id()),
+            )
+        else:
+            conn.execute(
+                "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=?, ultima_desparasitacion=? WHERE id=? AND empresa_id=?",
+                (nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, id, current_empresa_id()),
+            )
         conn.commit()
         cliente_id = request.args.get("cliente_id")
         conn.close()
@@ -2480,6 +2511,7 @@ def _render_cola_espera(conn, empresa_id):
           FROM clientes c
           LEFT JOIN animales a
                  ON a.cliente_id=c.id AND a.empresa_id=c.empresa_id
+                AND COALESCE(a.estado_vida,'Vivo')='Vivo'
          WHERE c.empresa_id=? AND COALESCE(c.activo,1)=1
          GROUP BY c.id, c.nombre, c.cedula, c.numero_socio
          ORDER BY c.nombre COLLATE NOCASE
@@ -2549,6 +2581,7 @@ def _registrar_llegada_cola(conn, empresa_id):
         SELECT 1
           FROM clientes c
           JOIN animales an ON an.id=? AND an.cliente_id=c.id AND an.empresa_id=c.empresa_id
+                           AND COALESCE(an.estado_vida,'Vivo')='Vivo'
           JOIN motivos m ON m.id=? AND m.empresa_id=c.empresa_id AND COALESCE(m.genera_historia,1)=1
          WHERE c.id=? AND c.empresa_id=? AND COALESCE(c.activo,1)=1
         """,
@@ -3318,7 +3351,16 @@ def agenda_nueva():
 @app.route("/api/animales/<int:cliente_id>")
 def api_animales(cliente_id):
     conn = get_db()
-    animales = conn.execute("SELECT id, nombre FROM animales WHERE cliente_id=? AND empresa_id=?", (cliente_id, current_empresa_id())).fetchall()
+    if modo_estado_animal_actual():
+        animales = conn.execute(
+            "SELECT id, nombre FROM animales WHERE cliente_id=? AND empresa_id=? AND COALESCE(estado_vida,'Vivo')='Vivo' ORDER BY nombre COLLATE NOCASE",
+            (cliente_id, current_empresa_id()),
+        ).fetchall()
+    else:
+        animales = conn.execute(
+            "SELECT id, nombre FROM animales WHERE cliente_id=? AND empresa_id=? ORDER BY nombre COLLATE NOCASE",
+            (cliente_id, current_empresa_id()),
+        ).fetchall()
     conn.close()
     lista = [{"id": a["id"], "nombre": a["nombre"]} for a in animales]
     return jsonify(lista)
