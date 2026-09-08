@@ -120,6 +120,11 @@ MODALIDADES_COBRO_ESPECIAL = ('Cobrador', 'Débito automático', 'En clínica')
 def modo_cobro_especial_actual():
     return bool(session.get('modo_cobro_especial', 0))
 
+def modo_cola_espera_actual():
+    # Sala de espera por orden de llegada. Se habilita por empresa y hoy solo
+    # corresponde a las dos veterinarias demo solicitadas.
+    return bool(session.get('modo_cola_espera', 0))
+
 def _validar_modalidad_cobro(metodo_pago):
     metodo_pago = (metodo_pago or '').strip()
     if modo_cobro_especial_actual():
@@ -356,7 +361,8 @@ def _saas_guard():
                        e.nombre AS empresa_nombre, e.activa AS empresa_activa,
                        COALESCE(e.modo_atencion_directa, 0) AS empresa_modo_atencion_directa,
                        COALESCE(e.modo_socios, 0) AS empresa_modo_socios,
-                       COALESCE(e.modo_cobro_especial, 0) AS empresa_modo_cobro_especial
+                       COALESCE(e.modo_cobro_especial, 0) AS empresa_modo_cobro_especial,
+                       COALESCE(e.modo_cola_espera, 0) AS empresa_modo_cola_espera
                   FROM usuarios u
                   LEFT JOIN empresas e ON e.id = u.empresa_id
                  WHERE u.id=?
@@ -374,6 +380,7 @@ def _saas_guard():
             session['modo_atencion_directa'] = int(user['empresa_modo_atencion_directa'] or 0)
             session['modo_socios'] = int(user['empresa_modo_socios'] or 0)
             session['modo_cobro_especial'] = int(user['empresa_modo_cobro_especial'] or 0)
+            session['modo_cola_espera'] = int(user['empresa_modo_cola_espera'] or 0)
             g.empresa_id = user['empresa_id']
             g.user_id = user['id']
     finally:
@@ -427,12 +434,20 @@ def init_db():
     _modo_atencion_nuevo = 'modo_atencion_directa' not in empresa_cols
     _modo_socios_nuevo = 'modo_socios' not in empresa_cols
     _modo_cobro_especial_nuevo = 'modo_cobro_especial' not in empresa_cols
+    _modo_cola_espera_nuevo = 'modo_cola_espera' not in empresa_cols
+    _cola_contador_nuevo = 'cola_contador' not in empresa_cols
     if _modo_atencion_nuevo:
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_atencion_directa INTEGER DEFAULT 0")
     if _modo_socios_nuevo:
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_socios INTEGER DEFAULT 0")
     if _modo_cobro_especial_nuevo:
         cur.execute("ALTER TABLE empresas ADD COLUMN modo_cobro_especial INTEGER DEFAULT 0")
+    if _modo_cola_espera_nuevo:
+        cur.execute("ALTER TABLE empresas ADD COLUMN modo_cola_espera INTEGER DEFAULT 0")
+    # Contador persistente de tickets de sala de espera. No se reinicia por fecha:
+    # únicamente cambia cuando la veterinaria usa el botón de reinicio manual.
+    if _cola_contador_nuevo:
+        cur.execute("ALTER TABLE empresas ADD COLUMN cola_contador INTEGER DEFAULT 0")
 
     cur.execute("""
     CREATE TABLE IF NOT EXISTS usuarios (
@@ -529,8 +544,10 @@ def init_db():
                 (_slug_especial,),
             ).fetchone()
         if _especial:
+            # Ambas funciones son exclusivas de estas dos empresas: facturación
+            # especial y sala de espera por orden de llegada.
             cur.execute(
-                "UPDATE empresas SET modo_cobro_especial=1 WHERE id=?",
+                "UPDATE empresas SET modo_cobro_especial=1, modo_cola_espera=1 WHERE id=?",
                 (int(_especial['empresa_id']),),
             )
 
@@ -629,6 +646,64 @@ def init_db():
         FOREIGN KEY(doctor_id) REFERENCES doctores(id),
         FOREIGN KEY(motivo_id) REFERENCES motivos(id)
     )""")
+
+    # Sala de espera para atención por orden de llegada. Es una tabla nueva,
+    # separada de agenda, para no modificar ni reinterpretar citas históricas.
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS cola_espera (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        empresa_id INTEGER NOT NULL,
+        cliente_id INTEGER NOT NULL,
+        animal_id INTEGER NOT NULL,
+        motivo_id INTEGER NOT NULL,
+        lugar TEXT DEFAULT 'Clinica',
+        ingreso_at TEXT NOT NULL,
+        numero_turno INTEGER,
+        estado TEXT DEFAULT 'Esperando',
+        llamado_at TEXT,
+        doctor_id INTEGER,
+        inicio_at TEXT,
+        finalizado_at TEXT,
+        cita_id INTEGER,
+        observacion TEXT,
+        FOREIGN KEY(empresa_id) REFERENCES empresas(id),
+        FOREIGN KEY(cliente_id) REFERENCES clientes(id),
+        FOREIGN KEY(animal_id) REFERENCES animales(id),
+        FOREIGN KEY(motivo_id) REFERENCES motivos(id),
+        FOREIGN KEY(doctor_id) REFERENCES doctores(id),
+        FOREIGN KEY(cita_id) REFERENCES agenda(id)
+    )""")
+    # Migración suave para instalaciones que ya recibieron la primera versión
+    # de sala de espera. Agrega el número fijo sin borrar ni recrear la tabla.
+    cola_cols = {r['name'] for r in cur.execute("PRAGMA table_info(cola_espera)").fetchall()}
+    _numero_turno_nuevo = 'numero_turno' not in cola_cols
+    if _numero_turno_nuevo:
+        cur.execute("ALTER TABLE cola_espera ADD COLUMN numero_turno INTEGER")
+        # Si ya había pacientes registrados, se les asigna una numeración estable
+        # por empresa respetando el orden histórico. Esto se ejecuta UNA sola vez.
+        empresas_cola = cur.execute(
+            "SELECT DISTINCT empresa_id FROM cola_espera ORDER BY empresa_id"
+        ).fetchall()
+        for _erow in empresas_cola:
+            _eid = int(_erow['empresa_id'])
+            _n = 0
+            for _qrow in cur.execute(
+                "SELECT id FROM cola_espera WHERE empresa_id=? ORDER BY ingreso_at ASC, id ASC",
+                (_eid,),
+            ).fetchall():
+                _n += 1
+                cur.execute(
+                    "UPDATE cola_espera SET numero_turno=? WHERE id=? AND empresa_id=?",
+                    (_n, int(_qrow['id']), _eid),
+                )
+            cur.execute(
+                "UPDATE empresas SET cola_contador=? WHERE id=?",
+                (_n, _eid),
+            )
+    try:
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cola_espera_empresa_estado_ingreso ON cola_espera(empresa_id, estado, ingreso_at, id)")
+    except Exception:
+        pass
 
     # Mensualidades
     cur.execute("""
@@ -1426,6 +1501,7 @@ def inject_saas_context():
         'modo_atencion_directa': modo_atencion_directa_actual(),
         'modo_socios': modo_socios_actual(),
         'modo_cobro_especial': modo_cobro_especial_actual(),
+        'modo_cola_espera': modo_cola_espera_actual(),
         'modalidades_cobro_especial': MODALIDADES_COBRO_ESPECIAL,
     }
 
@@ -2322,6 +2398,576 @@ def _atencion_directa_seleccion(conn, empresa_id, cliente_id, animal_id, doctor_
     ).fetchone()
 
 
+def _ahora_local_clinica():
+    try:
+        return datetime.now(ZoneInfo(_get_browser_timezone()))
+    except Exception:
+        return datetime.now(ZoneInfo("America/Montevideo"))
+
+
+def _cola_espera_datos(conn, empresa_id):
+    """Devuelve todos los pacientes activos, aunque hayan ingresado otro día.
+
+    La cola NO se vacía por fecha. Esto evita que un paciente pendiente desaparezca
+    de la pantalla al cambiar el día. Los atendidos que se muestran abajo sí se
+    limitan al día actual solo como resumen visual.
+    """
+    hoy = _ahora_local_clinica().strftime("%Y-%m-%d")
+    rows = conn.execute(
+        """
+        SELECT q.id, q.ingreso_at, q.numero_turno, q.estado, q.llamado_at, q.inicio_at,
+               q.cliente_id, q.animal_id, q.motivo_id, q.doctor_id, q.lugar,
+               c.nombre AS cliente_nombre, c.numero_socio, c.cedula,
+               an.nombre AS animal_nombre,
+               m.nombre AS motivo_nombre,
+               d.nombre AS doctor_nombre
+          FROM cola_espera q
+          JOIN clientes c ON c.id=q.cliente_id AND c.empresa_id=q.empresa_id
+          JOIN animales an ON an.id=q.animal_id AND an.empresa_id=q.empresa_id
+          JOIN motivos m ON m.id=q.motivo_id AND m.empresa_id=q.empresa_id
+          LEFT JOIN doctores d ON d.id=q.doctor_id AND d.empresa_id=q.empresa_id
+         WHERE q.empresa_id=?
+           AND q.estado IN ('Esperando','Llamado','En atención')
+         ORDER BY q.ingreso_at ASC, q.id ASC
+        """,
+        (empresa_id,),
+    ).fetchall()
+    activos = [dict(r) for r in rows]
+    orden = 0
+    for item in activos:
+        fecha_ingreso = (item.get('ingreso_at') or '')[:10]
+        item['es_hoy'] = fecha_ingreso == hoy
+        if fecha_ingreso and len(fecha_ingreso) == 10:
+            try:
+                item['fecha_ingreso_display'] = datetime.strptime(fecha_ingreso, '%Y-%m-%d').strftime('%d/%m/%Y')
+            except Exception:
+                item['fecha_ingreso_display'] = fecha_ingreso
+        else:
+            item['fecha_ingreso_display'] = fecha_ingreso
+        item['numero_turno_display'] = f"{int(item['numero_turno']):03d}" if item.get('numero_turno') is not None else '—'
+        if item['estado'] == 'Esperando':
+            orden += 1
+            item['orden_espera'] = orden
+        else:
+            item['orden_espera'] = None
+
+    finalizados = [dict(r) for r in conn.execute(
+        """
+        SELECT q.id, q.ingreso_at, q.numero_turno, q.finalizado_at, q.estado,
+               c.nombre AS cliente_nombre, an.nombre AS animal_nombre,
+               d.nombre AS doctor_nombre
+          FROM cola_espera q
+          JOIN clientes c ON c.id=q.cliente_id AND c.empresa_id=q.empresa_id
+          JOIN animales an ON an.id=q.animal_id AND an.empresa_id=q.empresa_id
+          LEFT JOIN doctores d ON d.id=q.doctor_id AND d.empresa_id=q.empresa_id
+         WHERE q.empresa_id=?
+           AND substr(q.finalizado_at,1,10)=?
+           AND q.estado='Atendido'
+         ORDER BY COALESCE(q.finalizado_at, q.ingreso_at) DESC, q.id DESC
+         LIMIT 20
+        """,
+        (empresa_id, hoy),
+    ).fetchall()]
+    for item in finalizados:
+        item['numero_turno_display'] = f"{int(item['numero_turno']):03d}" if item.get('numero_turno') is not None else '—'
+    return activos, finalizados
+
+def _render_cola_espera(conn, empresa_id):
+    clientes_rows = conn.execute(
+        """
+        SELECT c.id, c.nombre, c.cedula, c.numero_socio,
+               COALESCE(GROUP_CONCAT(a.nombre, ' || '), '') AS animales
+          FROM clientes c
+          LEFT JOIN animales a
+                 ON a.cliente_id=c.id AND a.empresa_id=c.empresa_id
+         WHERE c.empresa_id=? AND COALESCE(c.activo,1)=1
+         GROUP BY c.id, c.nombre, c.cedula, c.numero_socio
+         ORDER BY c.nombre COLLATE NOCASE
+        """,
+        (empresa_id,),
+    ).fetchall()
+    clientes = []
+    for r in clientes_rows:
+        clientes.append({
+            "id": r["id"],
+            "nombre": r["nombre"],
+            "cedula": r["cedula"],
+            "numero_socio": r["numero_socio"],
+            "animales": [x.strip() for x in (r["animales"] or "").split(" || ") if x.strip()],
+        })
+    doctores = [dict(r) for r in conn.execute(
+        "SELECT id, nombre FROM doctores WHERE empresa_id=? ORDER BY nombre COLLATE NOCASE",
+        (empresa_id,),
+    ).fetchall()]
+    motivos = [dict(r) for r in conn.execute(
+        """
+        SELECT id, nombre, duracion_minutos
+          FROM motivos
+         WHERE empresa_id=? AND COALESCE(genera_historia,1)=1
+         ORDER BY nombre COLLATE NOCASE
+        """,
+        (empresa_id,),
+    ).fetchall()]
+    activos, finalizados = _cola_espera_datos(conn, empresa_id)
+    contador_row = conn.execute(
+        "SELECT COALESCE(cola_contador, 0) AS cola_contador FROM empresas WHERE id=?",
+        (empresa_id,),
+    ).fetchone()
+    contador_actual = int(contador_row['cola_contador'] or 0) if contador_row else 0
+    proximo_turno = contador_actual + 1
+    preset = {
+        "cliente_id": request.args.get("cliente_id", type=int),
+        "animal_id": request.args.get("animal_id", type=int),
+    }
+    return render_template(
+        "sala_espera.html",
+        clientes=clientes,
+        doctores=doctores,
+        motivos=motivos,
+        activos=activos,
+        finalizados=finalizados,
+        preset=preset,
+        contador_actual=contador_actual,
+        proximo_turno_display=f"{proximo_turno:03d}",
+    )
+
+
+def _registrar_llegada_cola(conn, empresa_id):
+    cliente_id = request.form.get("cliente_id", type=int)
+    animal_id = request.form.get("animal_id", type=int)
+    motivo_id = request.form.get("motivo_id", type=int)
+    lugar = (request.form.get("lugar") or "Clinica").strip()
+    if lugar not in ("Clinica", "Domicilio"):
+        lugar = "Clinica"
+
+    if not all([cliente_id, animal_id, motivo_id]):
+        flash("Seleccioná cliente, mascota y motivo para registrar la llegada.", "warning")
+        return redirect(url_for("atender_directo"))
+
+    valido = conn.execute(
+        """
+        SELECT 1
+          FROM clientes c
+          JOIN animales an ON an.id=? AND an.cliente_id=c.id AND an.empresa_id=c.empresa_id
+          JOIN motivos m ON m.id=? AND m.empresa_id=c.empresa_id AND COALESCE(m.genera_historia,1)=1
+         WHERE c.id=? AND c.empresa_id=? AND COALESCE(c.activo,1)=1
+        """,
+        (animal_id, motivo_id, cliente_id, empresa_id),
+    ).fetchone()
+    if not valido:
+        flash("No se pudo validar cliente, mascota o motivo. No se guardó nada.", "danger")
+        return redirect(url_for("atender_directo"))
+
+    duplicado = conn.execute(
+        """
+        SELECT id FROM cola_espera
+         WHERE empresa_id=? AND animal_id=?
+           AND estado IN ('Esperando','Llamado','En atención')
+         LIMIT 1
+        """,
+        (empresa_id, animal_id),
+    ).fetchone()
+    if duplicado:
+        flash("Esa mascota ya está en la sala de espera.", "warning")
+        return redirect(url_for("atender_directo"))
+
+    ingreso_at = _ahora_local_clinica().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        # La numeración se guarda en la base de datos y NO depende del cambio de día.
+        # BEGIN IMMEDIATE evita que dos puestos entreguen el mismo número si registran
+        # pacientes prácticamente al mismo tiempo.
+        conn.execute("BEGIN IMMEDIATE")
+        row_contador = conn.execute(
+            "SELECT COALESCE(cola_contador, 0) AS cola_contador FROM empresas WHERE id=?",
+            (empresa_id,),
+        ).fetchone()
+        if not row_contador:
+            raise RuntimeError("Empresa no encontrada al generar el turno")
+        numero_turno = int(row_contador['cola_contador'] or 0) + 1
+        # Si la veterinaria reinició el contador pero decidió conservar pacientes
+        # pendientes de una jornada anterior, evitamos entregar un número que todavía
+        # esté activo. Se comienza desde 001 y se salta cualquier número ocupado.
+        usados_activos = {
+            int(r['numero_turno']) for r in conn.execute(
+                """
+                SELECT numero_turno FROM cola_espera
+                 WHERE empresa_id=?
+                   AND estado IN ('Esperando','Llamado','En atención')
+                   AND numero_turno IS NOT NULL
+                """,
+                (empresa_id,),
+            ).fetchall()
+        }
+        while numero_turno in usados_activos:
+            numero_turno += 1
+        conn.execute(
+            "UPDATE empresas SET cola_contador=? WHERE id=?",
+            (numero_turno, empresa_id),
+        )
+        cur = conn.execute(
+            """
+            INSERT INTO cola_espera
+                (empresa_id, cliente_id, animal_id, motivo_id, lugar, ingreso_at, numero_turno, estado)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'Esperando')
+            """,
+            (empresa_id, cliente_id, animal_id, motivo_id, lugar, ingreso_at, numero_turno),
+        )
+        cola_id = cur.lastrowid
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        flash("No se pudo registrar la llegada. No se modificó ningún dato previo.", "danger")
+        return redirect(url_for("atender_directo"))
+
+    flash(
+        f"Llegada registrada. Turno Nº {numero_turno:03d}. El contador seguirá desde ahí hasta que la veterinaria lo reinicie manualmente.",
+        "success",
+    )
+    return redirect(url_for("atender_directo", ticket_nuevo=cola_id))
+
+
+@app.route("/sala-espera/reiniciar-contador", methods=["POST"])
+@require_auth
+def cola_reiniciar_contador():
+    """Reinicia únicamente la numeración de tickets; nunca borra pacientes."""
+    if not modo_cola_espera_actual():
+        abort(403)
+    empresa_id = current_empresa_id()
+    conn = get_db()
+    conn.execute("UPDATE empresas SET cola_contador=0 WHERE id=?", (empresa_id,))
+    conn.commit()
+    conn.close()
+    flash(
+        "Contador reiniciado manualmente. El próximo ticket será Nº 001. Los pacientes que estaban esperando siguen en la sala y no se borró ningún dato.",
+        "success",
+    )
+    return redirect(url_for("atender_directo"))
+
+
+@app.route("/sala-espera/<int:cola_id>/ticket", methods=["GET"])
+@require_auth
+def cola_ticket(cola_id):
+    """Vista de impresión del ticket para una etiquetera instalada en la PC."""
+    if not modo_cola_espera_actual():
+        abort(403)
+    empresa_id = current_empresa_id()
+    conn = get_db()
+    q = conn.execute(
+        """
+        SELECT q.id, q.ingreso_at, q.numero_turno, q.estado, q.lugar,
+               e.nombre AS empresa_nombre,
+               c.nombre AS cliente_nombre,
+               an.nombre AS animal_nombre,
+               m.nombre AS motivo_nombre
+          FROM cola_espera q
+          JOIN empresas e ON e.id=q.empresa_id
+          JOIN clientes c ON c.id=q.cliente_id AND c.empresa_id=q.empresa_id
+          JOIN animales an ON an.id=q.animal_id AND an.empresa_id=q.empresa_id
+          JOIN motivos m ON m.id=q.motivo_id AND m.empresa_id=q.empresa_id
+         WHERE q.id=? AND q.empresa_id=?
+        """,
+        (cola_id, empresa_id),
+    ).fetchone()
+    conn.close()
+    if not q:
+        abort(404)
+    ticket = dict(q)
+    ticket['numero_turno_display'] = f"{int(ticket['numero_turno']):03d}" if ticket.get('numero_turno') is not None else str(ticket['id'])
+    return render_template("ticket_cola.html", ticket=ticket)
+
+
+@app.route("/sala-espera/<int:cola_id>/llamar", methods=["POST"])
+@require_auth
+def cola_llamar(cola_id):
+    if not modo_cola_espera_actual():
+        abort(403)
+    empresa_id = current_empresa_id()
+    doctor_id = request.form.get("doctor_id", type=int)
+    conn = get_db()
+    doctor = conn.execute(
+        "SELECT id FROM doctores WHERE id=? AND empresa_id=?",
+        (doctor_id, empresa_id),
+    ).fetchone()
+    if not doctor:
+        conn.close()
+        flash("Seleccioná el veterinario que va a llamar al paciente.", "warning")
+        return redirect(url_for("atender_directo"))
+
+    # Respetar estrictamente el orden de llegada entre quienes siguen esperando.
+    primero = conn.execute(
+        """
+        SELECT id FROM cola_espera
+         WHERE empresa_id=? AND estado='Esperando'
+         ORDER BY ingreso_at ASC, id ASC
+         LIMIT 1
+        """,
+        (empresa_id,),
+    ).fetchone()
+    if not primero or int(primero['id']) != int(cola_id):
+        conn.close()
+        flash("Hay otro paciente esperando desde antes. Primero corresponde llamar al que está Nº 1.", "warning")
+        return redirect(url_for("atender_directo"))
+
+    ahora = _ahora_local_clinica().strftime("%Y-%m-%d %H:%M:%S")
+    cur = conn.execute(
+        """
+        UPDATE cola_espera
+           SET estado='Llamado', doctor_id=?, llamado_at=?
+         WHERE id=? AND empresa_id=? AND estado='Esperando'
+        """,
+        (doctor_id, ahora, cola_id, empresa_id),
+    )
+    cambio = cur.rowcount
+    conn.commit()
+    conn.close()
+    if cambio != 1:
+        flash("Ese paciente ya fue tomado por otro veterinario o cambió de estado.", "warning")
+    else:
+        flash("Paciente llamado. Cuando ingrese al consultorio, presioná Atender.", "success")
+    return redirect(url_for("atender_directo"))
+
+
+@app.route("/sala-espera/<int:cola_id>/atender", methods=["GET"])
+@require_auth
+def cola_atender(cola_id):
+    if not modo_cola_espera_actual():
+        abort(403)
+    empresa_id = current_empresa_id()
+    conn = get_db()
+    q = conn.execute(
+        """
+        SELECT q.*,
+               c.nombre AS cliente_nombre, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion,
+               an.nombre AS animal_nombre,
+               d.nombre AS doctor_nombre,
+               m.nombre AS motivo_nombre, m.tipo AS motivo_tipo,
+               COALESCE(m.genera_historia,1) AS motivo_genera_historia
+          FROM cola_espera q
+          JOIN clientes c ON c.id=q.cliente_id AND c.empresa_id=q.empresa_id
+          JOIN animales an ON an.id=q.animal_id AND an.empresa_id=q.empresa_id
+          JOIN doctores d ON d.id=q.doctor_id AND d.empresa_id=q.empresa_id
+          JOIN motivos m ON m.id=q.motivo_id AND m.empresa_id=q.empresa_id
+         WHERE q.id=? AND q.empresa_id=?
+        """,
+        (cola_id, empresa_id),
+    ).fetchone()
+    if not q:
+        conn.close()
+        flash("Paciente de sala de espera no encontrado.", "danger")
+        return redirect(url_for("atender_directo"))
+    if q['estado'] not in ('Llamado', 'En atención'):
+        conn.close()
+        flash("Primero hay que llamar al paciente desde la sala de espera.", "warning")
+        return redirect(url_for("atender_directo"))
+    if int(q['motivo_genera_historia'] or 0) != 1:
+        conn.close()
+        flash("El motivo elegido no genera historia clínica.", "warning")
+        return redirect(url_for("atender_directo"))
+
+    if q['estado'] == 'Llamado':
+        inicio = _ahora_local_clinica().strftime("%Y-%m-%d %H:%M:%S")
+        cur = conn.execute(
+            """
+            UPDATE cola_espera SET estado='En atención', inicio_at=?
+             WHERE id=? AND empresa_id=? AND estado='Llamado'
+            """,
+            (inicio, cola_id, empresa_id),
+        )
+        conn.commit()
+        if cur.rowcount != 1:
+            conn.close()
+            flash("El estado cambió en otra computadora. Actualizá la sala de espera.", "warning")
+            return redirect(url_for("atender_directo"))
+        q = dict(q)
+        q['estado'] = 'En atención'
+        q['inicio_at'] = inicio
+    else:
+        q = dict(q)
+    conn.close()
+    return render_template("atender_cola.html", cita=q, cola_id=cola_id)
+
+
+@app.route("/sala-espera/<int:cola_id>/guardar", methods=["POST"])
+@require_auth
+def cola_atender_guardar(cola_id):
+    if not modo_cola_espera_actual():
+        abort(403)
+    empresa_id = current_empresa_id()
+    descripcion = (request.form.get("descripcion") or "").strip()
+    if not descripcion:
+        flash("La descripción/examen es obligatoria.", "warning")
+        return redirect(url_for("cola_atender", cola_id=cola_id))
+
+    conn = get_db()
+    q = conn.execute(
+        """
+        SELECT q.*, COALESCE(m.genera_historia,1) AS motivo_genera_historia, m.tipo AS motivo_tipo
+          FROM cola_espera q
+          JOIN clientes c ON c.id=q.cliente_id AND c.empresa_id=q.empresa_id
+          JOIN animales an ON an.id=q.animal_id AND an.empresa_id=q.empresa_id
+          JOIN doctores d ON d.id=q.doctor_id AND d.empresa_id=q.empresa_id
+          JOIN motivos m ON m.id=q.motivo_id AND m.empresa_id=q.empresa_id
+         WHERE q.id=? AND q.empresa_id=?
+        """,
+        (cola_id, empresa_id),
+    ).fetchone()
+    if not q or q['estado'] != 'En atención' or int(q['motivo_genera_historia'] or 0) != 1:
+        conn.close()
+        flash("La atención ya cambió de estado o no se pudo validar. No se guardó ningún dato.", "danger")
+        return redirect(url_for("atender_directo"))
+
+    ahora_local = _ahora_local_clinica()
+    fecha = ahora_local.strftime("%Y-%m-%d")
+    hora = ahora_local.strftime("%H:%M")
+    fecha_historia = ahora_local.strftime("%Y-%m-%d %H:%M")
+    finalizado_at = ahora_local.strftime("%Y-%m-%d %H:%M:%S")
+    precio_cita = _precio_cita_calculado(conn, q['cliente_id'], q['motivo_id'], fecha, hora, q['lugar'])
+    estado_pago = "Pagado" if precio_cita == 0 else "Debe"
+
+    peso_kg = _to_float(request.form.get("peso_kg"))
+    temp_c = _to_float(request.form.get("temp_c"))
+    fc = request.form.get("fc") or None
+    fr = request.form.get("fr") or None
+    mucosas = (request.form.get("mucosas") or "").strip() or None
+    hidratacion = (request.form.get("hidratacion") or "").strip() or None
+    motivo_consulta = (request.form.get("motivo_consulta") or "").strip() or None
+    anamnesis = (request.form.get("anamnesis") or "").strip() or None
+    dx_presuntivo = (request.form.get("diagnostico_presuntivo") or "").strip() or None
+    dx_diferencial = (request.form.get("diagnostico_diferencial") or "").strip() or None
+    tratamiento = (request.form.get("tratamiento") or "").strip() or None
+    indicaciones = (request.form.get("indicaciones") or "").strip() or None
+    particularidades = (request.form.get("particularidades") or "").strip() or None
+    proxima_cita_texto = (request.form.get("proxima_cita") or "").strip() or None
+
+    cur = conn.cursor()
+    try:
+        # Cita, historia y cierre de la cola se guardan en UNA sola transacción.
+        # Si falla cualquier paso, no queda una atención a medias.
+        cur.execute(
+            """
+            INSERT INTO agenda
+                (cliente_id, animal_id, doctor_id, fecha, hora, motivo_id,
+                 estado_pago, precio, lugar, atendida, empresa_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (q['cliente_id'], q['animal_id'], q['doctor_id'], fecha, hora, q['motivo_id'],
+             estado_pago, precio_cita, q['lugar'], empresa_id),
+        )
+        cita_id = cur.lastrowid
+
+        cur.execute(
+            """
+            INSERT INTO historia_clinica
+            (animal_id, fecha, descripcion,
+             peso_kg, temp_c, fc, fr, mucosas, hidratacion,
+             motivo_consulta, anamnesis,
+             diagnostico_presuntivo, diagnostico_diferencial,
+             tratamiento, indicaciones, particularidades,
+             proxima_cita, tipo_visita,
+             doctor_id, cita_id, empresa_id)
+            VALUES
+            (?, ?, ?,
+             ?, ?, ?, ?, ?, ?,
+             ?, ?,
+             ?, ?,
+             ?, ?, ?,
+             ?, ?, ?, ?, ?)
+            """,
+            (
+                q['animal_id'], fecha_historia, descripcion,
+                peso_kg, temp_c, fc, fr, mucosas, hidratacion,
+                motivo_consulta, anamnesis,
+                dx_presuntivo, dx_diferencial,
+                tratamiento, indicaciones, particularidades,
+                proxima_cita_texto, q['motivo_tipo'],
+                q['doctor_id'], cita_id, empresa_id,
+            ),
+        )
+        historia_id = cur.lastrowid
+
+        if "imagen" in request.files:
+            for file in request.files.getlist("imagen"):
+                if file and file.filename:
+                    filename = secure_filename(file.filename)
+                    file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                    cur.execute(
+                        "INSERT INTO imagenes_historia (historia_id, filename) VALUES (?, ?)",
+                        (historia_id, filename),
+                    )
+
+        actualizado = cur.execute(
+            """
+            UPDATE cola_espera
+               SET estado='Atendido', finalizado_at=?, cita_id=?
+             WHERE id=? AND empresa_id=? AND estado='En atención'
+            """,
+            (finalizado_at, cita_id, cola_id, empresa_id),
+        )
+        if actualizado.rowcount != 1:
+            raise RuntimeError("La sala de espera cambió de estado antes de guardar")
+
+        _actualizar_flag_deudor(conn, q['cliente_id'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        flash("No se pudo guardar la atención. No se perdió ni se modificó ningún dato previo.", "danger")
+        return redirect(url_for("cola_atender", cola_id=cola_id))
+
+    conn.close()
+    flash("Historia clínica registrada y paciente finalizado en la sala de espera.", "success")
+    return redirect(url_for("historia", animal_id=q['animal_id']))
+
+
+@app.route("/sala-espera/<int:cola_id>/volver", methods=["POST"])
+@require_auth
+def cola_volver_espera(cola_id):
+    if not modo_cola_espera_actual():
+        abort(403)
+    empresa_id = current_empresa_id()
+    conn = get_db()
+    cur = conn.execute(
+        """
+        UPDATE cola_espera
+           SET estado='Esperando', doctor_id=NULL, llamado_at=NULL, inicio_at=NULL
+         WHERE id=? AND empresa_id=? AND estado IN ('Llamado','En atención') AND cita_id IS NULL
+        """,
+        (cola_id, empresa_id),
+    )
+    cambio = cur.rowcount
+    conn.commit()
+    conn.close()
+    if cambio == 1:
+        flash("Paciente devuelto a la sala de espera.", "success")
+    else:
+        flash("No se pudo volver a espera porque el estado ya cambió.", "warning")
+    return redirect(url_for("atender_directo"))
+
+
+@app.route("/sala-espera/<int:cola_id>/cancelar", methods=["POST"])
+@require_auth
+def cola_cancelar(cola_id):
+    if not modo_cola_espera_actual():
+        abort(403)
+    empresa_id = current_empresa_id()
+    conn = get_db()
+    cur = conn.execute(
+        """
+        UPDATE cola_espera
+           SET estado='Cancelado', finalizado_at=?
+         WHERE id=? AND empresa_id=? AND estado IN ('Esperando','Llamado') AND cita_id IS NULL
+        """,
+        (_ahora_local_clinica().strftime("%Y-%m-%d %H:%M:%S"), cola_id, empresa_id),
+    )
+    cambio = cur.rowcount
+    conn.commit()
+    conn.close()
+    if cambio == 1:
+        flash("Paciente quitado de la sala de espera. No se borró ningún cliente ni historia.", "success")
+    else:
+        flash("No se pudo quitar porque el estado ya cambió.", "warning")
+    return redirect(url_for("atender_directo"))
+
 @app.route("/atender", methods=["GET", "POST"])
 @require_auth
 def atender_directo():
@@ -2331,6 +2977,18 @@ def atender_directo():
 
     conn = get_db()
     empresa_id = current_empresa_id()
+
+    # Para las dos veterinarias configuradas con sala de espera, el botón Atender
+    # primero registra la llegada y respeta el orden. Las demás conservan el flujo
+    # directo exactamente como estaba.
+    if modo_cola_espera_actual():
+        if request.method == "POST":
+            respuesta = _registrar_llegada_cola(conn, empresa_id)
+            conn.close()
+            return respuesta
+        respuesta = _render_cola_espera(conn, empresa_id)
+        conn.close()
+        return respuesta
 
     if request.method == "POST":
         cliente_id = request.form.get("cliente_id", type=int)
@@ -2430,6 +3088,9 @@ def atender_directo():
 def atender_directo_guardar():
     if not modo_atencion_directa_actual():
         abort(403)
+    if modo_cola_espera_actual():
+        flash("Esta veterinaria utiliza la sala de espera. Seleccioná al paciente desde Atender.", "info")
+        return redirect(url_for("atender_directo"))
 
     empresa_id = current_empresa_id()
     cliente_id = request.form.get("cliente_id", type=int)
