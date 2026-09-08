@@ -4,8 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ticket Nº {{ ticket.numero_turno_display }}</title>
+
+  {% set email_actual = (session.get('user_email') or '')|lower %}
+  {% set nombre_empresa_actual = (ticket.empresa_nombre or '')|lower %}
+  {% set es_el_oriental = email_actual == 'acceso.demo@vetcloud.com.uy' or nombre_empresa_actual == 'acceso.demo@vetcloud.com.uy' %}
+
   <style>
-    @page { size: 80mm 50mm; margin: 2mm; }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -13,6 +17,59 @@
       color: #000;
       background: #fff;
     }
+
+    {% if es_el_oriental %}
+    /*
+      SOLO Veterinaria El Oriental / acceso.demo.
+      La impresora usa rollo físico de 80 mm y aprox. 72 mm útiles.
+      Este CSS NO cambia las preferencias globales del driver de Windows:
+      solamente define el formato de ESTA vista de impresión de VetCloud.
+    */
+    @page {
+      size: 80mm 65mm;
+      margin: 4mm;
+    }
+    html, body {
+      width: 80mm;
+      min-width: 80mm;
+      max-width: 80mm;
+    }
+    .ticket {
+      width: 72mm;
+      max-width: 72mm;
+      min-height: 0;
+      margin: 0 auto;
+      padding: 0;
+      overflow: visible;
+    }
+    .empresa {
+      font-size: 16px;
+      font-weight: 700;
+      text-align: center;
+      line-height: 1.1;
+      margin: 0 0 1.5mm 0;
+    }
+    .numero {
+      font-size: 30px;
+      font-weight: 800;
+      text-align: center;
+      line-height: 1;
+      margin: 0.5mm 0 1.5mm;
+    }
+    .fila {
+      font-size: 11px;
+      line-height: 1.25;
+      margin: 0.6mm 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .fila strong { font-weight: 700; }
+    .separador { border-top: 1px dashed #000; margin: 1.2mm 0; }
+    .pie { text-align: center; font-size: 10px; margin-top: 1.5mm; }
+    {% else %}
+    /* Para acceso.demo2 y cualquier otro caso se conserva EXACTAMENTE
+       el formato anterior. */
+    @page { size: 80mm 50mm; margin: 2mm; }
     .ticket {
       width: 76mm;
       min-height: 46mm;
@@ -44,17 +101,36 @@
     .fila strong { font-weight: 700; }
     .separador { border-top: 1px dashed #000; margin: 1mm 0; }
     .pie { text-align: center; font-size: 10px; margin-top: 1mm; }
+    {% endif %}
+
     .acciones { margin: 12px; text-align: center; }
     .acciones button { font-size: 16px; padding: 8px 16px; }
+
     @media print {
       .acciones { display: none !important; }
+      {% if es_el_oriental %}
+      html, body {
+        width: 80mm !important;
+        min-width: 80mm !important;
+        max-width: 80mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      .ticket {
+        width: 72mm !important;
+        max-width: 72mm !important;
+        margin: 0 auto !important;
+        transform: none !important;
+      }
+      {% else %}
       body { width: 80mm; }
+      {% endif %}
     }
   </style>
 </head>
 <body>
   <div class="ticket">
-    <div class="empresa">{{ ticket.empresa_nombre }}</div>
+    <div class="empresa">{% if es_el_oriental %}Veterinaria El Oriental{% else %}{{ ticket.empresa_nombre }}{% endif %}</div>
     <div class="numero">Nº {{ ticket.numero_turno_display }}</div>
     <div class="separador"></div>
     <div class="fila"><strong>Fecha:</strong> {{ ticket.ingreso_at[8:10] }}/{{ ticket.ingreso_at[5:7] }}/{{ ticket.ingreso_at[0:4] }} &nbsp; <strong>Hora:</strong> {{ ticket.ingreso_at[11:16] }}</div>
