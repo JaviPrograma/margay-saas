@@ -1,0 +1,273 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-3">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h2 class="mb-1">Sala de espera</h2>
+      <div class="text-muted">Atención por orden de llegada. Los pacientes pendientes permanecen visibles aunque cambie el día; nada se reinicia automáticamente.</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a href="{{ url_for('atender_directo') }}" class="btn btn-outline-primary">↻ Actualizar lista</a>
+    </div>
+  </div>
+
+  {% if request.args.get('ticket_nuevo') %}
+  <div class="alert alert-success d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <div><strong>Paciente registrado.</strong> Si el cliente quiere comprobante, podés imprimir el ticket ahora.</div>
+    <a class="btn btn-success" target="_blank" href="{{ url_for('cola_ticket', cola_id=request.args.get('ticket_nuevo')|int) }}">🖨️ Imprimir ticket</a>
+  </div>
+  {% endif %}
+
+  <div class="card mb-4 border-primary shadow-sm">
+    <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+      <div>
+        <div class="small text-muted">Próximo número de ticket</div>
+        <div class="display-6 fw-bold mb-1">{{ proximo_turno_display }}</div>
+        <div class="small text-muted">La numeración continúa aunque cambie el día. Si la veterinaria reinicia, vuelve a empezar desde 001 y evita repetir números que todavía tengan pacientes activos.</div>
+      </div>
+      <form method="POST" action="{{ url_for('cola_reiniciar_contador') }}" onsubmit="return confirm('¿Reiniciar SOLO la numeración? Los pacientes en espera NO se borrarán ni cambiarán de estado. La nueva numeración comenzará desde 001 y saltará cualquier número que siga ocupado por un paciente pendiente.');">
+        <button class="btn btn-outline-danger" type="submit">Reiniciar numeración a 001</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4 shadow-sm">
+    <div class="card-header"><strong>Registrar llegada</strong></div>
+    <div class="card-body">
+      <form method="POST" action="{{ url_for('atender_directo') }}" id="formLlegada">
+        <div class="row g-3">
+          <div class="col-lg-5 position-relative">
+            <label class="form-label">Cliente</label>
+            <input id="buscador_cliente" type="text" class="form-control" autocomplete="off" placeholder="Nombre, cédula, N.º socio o mascota">
+            <div id="sugerencias_cliente" class="list-group position-absolute w-100 d-none" style="z-index:1050; max-height:300px; overflow:auto;"></div>
+            <select id="cliente_id" name="cliente_id" class="form-select mt-2" required>
+              <option value="" disabled selected>Seleccione un cliente</option>
+              {% for c in clientes %}
+                <option value="{{ c.id }}" {% if preset.cliente_id == c.id %}selected{% endif %}>{{ c.nombre }}{% if c.numero_socio %} — Socio {{ c.numero_socio }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-lg-3">
+            <label class="form-label">Mascota</label>
+            <select id="animal_id" name="animal_id" class="form-select" required {% if not preset.cliente_id %}disabled{% endif %}>
+              <option value="">Seleccione un cliente primero</option>
+            </select>
+          </div>
+          <div class="col-lg-2">
+            <label class="form-label">Motivo</label>
+            <select name="motivo_id" class="form-select" required>
+              <option value="" disabled selected>Seleccione</option>
+              {% for m in motivos %}<option value="{{ m.id }}">{{ m.nombre }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-lg-2">
+            <label class="form-label">Lugar</label>
+            <select name="lugar" class="form-select">
+              <option value="Clinica">Clínica</option>
+              <option value="Domicilio">Domicilio</option>
+            </select>
+          </div>
+        </div>
+        <div class="mt-3">
+          <button type="submit" class="btn btn-primary">➕ Registrar en espera</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-4 shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <strong>Pacientes pendientes / en atención</strong>
+      <span class="badge bg-primary">{{ activos|length }} activos</span>
+    </div>
+    <div class="card-body p-0">
+      {% if activos %}
+      <div class="table-responsive">
+        <table class="table table-striped align-middle mb-0">
+          <thead>
+            <tr>
+              <th style="width:80px;">Ticket</th>
+              <th style="width:70px;">Orden</th>
+              <th>Ingreso</th>
+              <th>Cliente / mascota</th>
+              <th>Motivo</th>
+              <th>Estado</th>
+              <th>Veterinario</th>
+              <th style="min-width:250px;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for q in activos %}
+            <tr>
+              <td><span class="badge bg-secondary fs-6">Nº {{ q.numero_turno_display }}</span></td>
+              <td>
+                {% if q.estado == 'Esperando' %}<span class="badge bg-dark fs-6">{{ q.orden_espera }}º</span>{% else %}—{% endif %}
+              </td>
+              <td>
+                <strong>{{ q.ingreso_at[11:16] }}</strong>
+                {% if not q.es_hoy %}<br><span class="badge bg-warning text-dark mt-1">{{ q.fecha_ingreso_display }}</span>{% endif %}
+              </td>
+              <td>
+                <strong>{{ q.cliente_nombre }}</strong><br>
+                <span class="text-muted">{{ q.animal_nombre }}{% if q.numero_socio %} · Socio {{ q.numero_socio }}{% endif %}</span>
+              </td>
+              <td>{{ q.motivo_nombre }}</td>
+              <td>
+                {% if q.estado == 'Esperando' %}<span class="badge bg-warning text-dark">Esperando</span>
+                {% elif q.estado == 'Llamado' %}<span class="badge bg-info text-dark">Llamado</span>
+                {% elif q.estado == 'En atención' %}<span class="badge bg-success">En atención</span>
+                {% endif %}
+              </td>
+              <td>{{ q.doctor_nombre or '—' }}</td>
+              <td>
+                <div class="mb-2">
+                  <a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('cola_ticket', cola_id=q.id) }}">🖨️ Ticket</a>
+                </div>
+                {% if q.estado == 'Esperando' %}
+                  {% if q.orden_espera == 1 %}
+                  <form method="POST" action="{{ url_for('cola_llamar', cola_id=q.id) }}" class="d-flex flex-wrap gap-2 mb-2">
+                    <select name="doctor_id" class="form-select form-select-sm" style="max-width:180px;" required>
+                      <option value="" selected disabled>Veterinario...</option>
+                      {% for d in doctores %}<option value="{{ d.id }}">{{ d.nombre }}</option>{% endfor %}
+                    </select>
+                    <button class="btn btn-sm btn-primary" type="submit">📣 Llamar al siguiente</button>
+                  </form>
+                  {% else %}
+                    <div class="small text-muted mb-2">Espera su turno. Primero corresponde el Nº 1.</div>
+                  {% endif %}
+                  <form method="POST" action="{{ url_for('cola_cancelar', cola_id=q.id) }}" onsubmit="return confirm('¿Quitar a este paciente de la sala de espera?');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Quitar de espera</button>
+                  </form>
+                {% elif q.estado == 'Llamado' %}
+                  <div class="d-flex flex-wrap gap-2">
+                    <a class="btn btn-sm btn-success" href="{{ url_for('cola_atender', cola_id=q.id) }}">🩺 Atender</a>
+                    <form method="POST" action="{{ url_for('cola_volver_espera', cola_id=q.id) }}">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Volver a espera</button>
+                    </form>
+                  </div>
+                {% elif q.estado == 'En atención' %}
+                  <div class="d-flex flex-wrap gap-2">
+                    <a class="btn btn-sm btn-success" href="{{ url_for('cola_atender', cola_id=q.id) }}">Continuar atención</a>
+                    <form method="POST" action="{{ url_for('cola_volver_espera', cola_id=q.id) }}" onsubmit="return confirm('¿Volver este paciente a la sala de espera? Los datos todavía no guardados en el formulario se perderán.');">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Volver a espera</button>
+                    </form>
+                  </div>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <div class="p-4 text-center text-muted">No hay pacientes pendientes en este momento.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if finalizados %}
+  <div class="card shadow-sm">
+    <div class="card-header"><strong>Últimos atendidos de hoy</strong></div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Ticket</th><th>Ingreso</th><th>Cliente</th><th>Mascota</th><th>Veterinario</th><th>Finalizó</th></tr></thead>
+        <tbody>
+        {% for q in finalizados %}
+          <tr>
+            <td>Nº {{ q.numero_turno_display }}</td>
+            <td>{{ q.ingreso_at[11:16] }}</td>
+            <td>{{ q.cliente_nombre }}</td>
+            <td>{{ q.animal_nombre }}</td>
+            <td>{{ q.doctor_nombre or '—' }}</td>
+            <td>{{ q.finalizado_at[11:16] if q.finalizado_at else '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+const BASE_CLIENTES = {{ clientes|tojson }};
+const PRESET_ANIMAL_ID = {{ preset.animal_id|tojson }};
+
+function loadAnimales(clienteId, preferredAnimalId=null){
+  const select = document.getElementById('animal_id');
+  if(!clienteId){
+    select.disabled = true;
+    select.innerHTML = '<option value="">Seleccione un cliente primero</option>';
+    return Promise.resolve();
+  }
+  select.disabled = true;
+  select.innerHTML = '<option value="">Cargando…</option>';
+  return fetch('{{ url_for("api_animales", cliente_id=0) }}'.replace('/0', '/' + clienteId))
+    .then(r => r.json())
+    .then(data => {
+      select.innerHTML = '<option value="" disabled selected>Seleccione una mascota</option>';
+      data.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.nombre;
+        if(preferredAnimalId && String(preferredAnimalId) === String(a.id)) opt.selected = true;
+        select.appendChild(opt);
+      });
+      select.disabled = false;
+    })
+    .catch(() => {
+      select.innerHTML = '<option value="">Error al cargar mascotas</option>';
+      select.disabled = true;
+    });
+}
+
+document.getElementById('cliente_id').addEventListener('change', function(){ loadAnimales(this.value); });
+
+(function(){
+  const input = document.getElementById('buscador_cliente');
+  const select = document.getElementById('cliente_id');
+  const box = document.getElementById('sugerencias_cliente');
+  const norm = s => (s || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  const digits = s => (s || '').toString().replace(/\D/g,'');
+  function label(c){ return c.nombre + (c.numero_socio ? ' — Socio ' + c.numero_socio : '') + (c.cedula ? ' — CI ' + c.cedula : ''); }
+  function hide(){ box.classList.add('d-none'); box.innerHTML=''; }
+  function choose(c, animalName){
+    select.value = String(c.id); input.value = label(c); hide();
+    loadAnimales(c.id).then(() => {
+      if(animalName){
+        const animalSelect = document.getElementById('animal_id');
+        const wanted = norm(animalName);
+        Array.from(animalSelect.options).forEach(o => { if(norm(o.textContent) === wanted) o.selected = true; });
+      }
+    });
+  }
+  input.addEventListener('input', function(){
+    const q = norm(this.value), qCed = digits(this.value);
+    if(!q){ hide(); return; }
+    const results=[];
+    BASE_CLIENTES.forEach(c => {
+      const clienteMatch = norm(c.nombre).includes(q) || norm(c.numero_socio).includes(q) || (qCed && (digits(c.cedula).includes(qCed) || digits(c.numero_socio).includes(qCed)));
+      const animalMatch = (c.animales || []).find(a => norm(a).includes(q));
+      if(clienteMatch || animalMatch) results.push({c, animalMatch});
+    });
+    box.innerHTML='';
+    if(!results.length){
+      const item=document.createElement('div'); item.className='list-group-item text-muted'; item.textContent='Sin resultados'; box.appendChild(item);
+    } else {
+      results.slice(0,10).forEach(r => {
+        const btn=document.createElement('button'); btn.type='button'; btn.className='list-group-item list-group-item-action';
+        const strong=document.createElement('strong'); strong.textContent=label(r.c); btn.appendChild(strong);
+        if(r.animalMatch){ const small=document.createElement('small'); small.className='d-block text-muted'; small.textContent='Mascota: '+r.animalMatch; btn.appendChild(small); }
+        btn.addEventListener('click', () => choose(r.c, r.animalMatch)); box.appendChild(btn);
+      });
+    }
+    box.classList.remove('d-none');
+  });
+  document.addEventListener('click', e => { if(!box.contains(e.target) && e.target !== input) hide(); });
+})();
+
+{% if preset.cliente_id %}
+document.addEventListener('DOMContentLoaded', () => loadAnimales(document.getElementById('cliente_id').value, PRESET_ANIMAL_ID));
+{% endif %}
+</script>
+{% endblock %}

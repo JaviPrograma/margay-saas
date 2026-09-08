@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ticket Nº {{ ticket.numero_turno_display }}</title>
+  <style>
+    @page { size: 80mm 50mm; margin: 2mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: #000;
+      background: #fff;
+    }
+    .ticket {
+      width: 76mm;
+      min-height: 46mm;
+      padding: 1mm 1.5mm;
+      overflow: hidden;
+    }
+    .empresa {
+      font-size: 15px;
+      font-weight: 700;
+      text-align: center;
+      line-height: 1.1;
+      margin-bottom: 1mm;
+    }
+    .numero {
+      font-size: 28px;
+      font-weight: 800;
+      text-align: center;
+      line-height: 1;
+      margin: 0.5mm 0 1.5mm;
+    }
+    .fila {
+      font-size: 11px;
+      line-height: 1.25;
+      margin: 0.5mm 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .fila strong { font-weight: 700; }
+    .separador { border-top: 1px dashed #000; margin: 1mm 0; }
+    .pie { text-align: center; font-size: 10px; margin-top: 1mm; }
+    .acciones { margin: 12px; text-align: center; }
+    .acciones button { font-size: 16px; padding: 8px 16px; }
+    @media print {
+      .acciones { display: none !important; }
+      body { width: 80mm; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ticket">
+    <div class="empresa">{{ ticket.empresa_nombre }}</div>
+    <div class="numero">Nº {{ ticket.numero_turno_display }}</div>
+    <div class="separador"></div>
+    <div class="fila"><strong>Fecha:</strong> {{ ticket.ingreso_at[8:10] }}/{{ ticket.ingreso_at[5:7] }}/{{ ticket.ingreso_at[0:4] }} &nbsp; <strong>Hora:</strong> {{ ticket.ingreso_at[11:16] }}</div>
+    <div class="fila"><strong>Cliente:</strong> {{ ticket.cliente_nombre }}</div>
+    <div class="fila"><strong>Paciente:</strong> {{ ticket.animal_nombre }}</div>
+    <div class="fila"><strong>Motivo:</strong> {{ ticket.motivo_nombre }}</div>
+    <div class="separador"></div>
+    <div class="pie">Aguarde a ser llamado</div>
+  </div>
+  <div class="acciones">
+    <button type="button" onclick="window.print()">Imprimir ticket</button>
+  </div>
+</body>
+</html>
