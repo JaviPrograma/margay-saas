@@ -8,6 +8,7 @@
   {% set email_actual = (session.get('user_email') or '')|lower %}
   {% set nombre_empresa_actual = (ticket.empresa_nombre or '')|lower %}
   {% set es_el_oriental = email_actual == 'acceso.demo@vetcloud.com.uy' or nombre_empresa_actual == 'acceso.demo@vetcloud.com.uy' %}
+  {% set impresion_local_ticket = email_actual in ['acceso.demo@vetcloud.com.uy', 'acceso.demo2@vetcloud.com.uy'] %}
 
   <style>
     * { box-sizing: border-box; }
@@ -141,7 +142,51 @@
     <div class="pie">Aguarde a ser llamado</div>
   </div>
   <div class="acciones">
+    {% if impresion_local_ticket %}
+    <button type="button" id="btnImprimirLocal" onclick="imprimirTicketLocal()">Imprimir ticket</button>
+    <div id="estadoImpresion" style="font: 13px Arial; margin-top: 8px;"></div>
+    {% else %}
     <button type="button" onclick="window.print()">Imprimir ticket</button>
+    {% endif %}
   </div>
+
+  {% if impresion_local_ticket %}
+  <script>
+    async function imprimirTicketLocal() {
+      const btn = document.getElementById('btnImprimirLocal');
+      const estado = document.getElementById('estadoImpresion');
+      const datos = {
+        token: 'VETCLOUD-TICKET-LOCAL-2026-09',
+        veterinaria: {{ ('Veterinaria El Oriental' if es_el_oriental else ticket.empresa_nombre)|tojson }},
+        numero: {{ ticket.numero_turno_display|tojson }},
+        fecha: {{ (ticket.ingreso_at[8:10] ~ '/' ~ ticket.ingreso_at[5:7] ~ '/' ~ ticket.ingreso_at[0:4])|tojson }},
+        hora: {{ ticket.ingreso_at[11:16]|tojson }},
+        cliente: {{ ticket.cliente_nombre|tojson }},
+        paciente: {{ ticket.animal_nombre|tojson }},
+        motivo: {{ ticket.motivo_nombre|tojson }}
+      };
+
+      btn.disabled = true;
+      estado.textContent = 'Enviando a la impresora...';
+      try {
+        const r = await fetch('http://127.0.0.1:8765/imprimir-ticket', {
+          method: 'POST',
+          mode: 'cors',
+          cache: 'no-store',
+          headers: {'Content-Type': 'text/plain;charset=UTF-8'},
+          body: JSON.stringify(datos)
+        });
+        const texto = await r.text();
+        if (!r.ok) throw new Error(texto || ('HTTP ' + r.status));
+        estado.textContent = 'Ticket enviado correctamente.';
+      } catch (e) {
+        estado.textContent = 'No se pudo conectar con VetCloud Impresora. Verifique que el programa local esté abierto.';
+        alert('No se pudo imprimir el ticket.\n\nVerifique que VetCloud Impresora esté abierto en esta PC.\n\nDetalle: ' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+  </script>
+  {% endif %}
 </body>
 </html>
