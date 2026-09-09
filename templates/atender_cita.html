@@ -34,6 +34,20 @@
     {% endif %}
     <h5 class="mb-3">Historia Clínica</h5>
 
+    {% if modo_cola_espera %}
+    <div class="alert alert-info py-2">
+      <strong>Fecha y hora real de la atención:</strong> podés cambiarla si la atención se realizó antes, por ejemplo en un domicilio cargado al día siguiente.
+    </div>
+    <div class="row g-3 mb-1">
+      <div class="col-md-6">
+        <label class="form-label">Fecha y hora de atención</label>
+        <input type="datetime-local" name="fecha_hora_atencion" id="fecha_hora_atencion" class="form-control"
+               {% if not atencion_directa_nueva and cita.fecha and cita.hora %}value="{{ cita.fecha }}T{{ cita.hora }}"{% endif %}>
+        <div class="form-text">Si no la cambiás, se usa la fecha/hora mostrada o la actual.</div>
+      </div>
+    </div>
+    {% endif %}
+
     <div class="row g-3">
       <div class="col-md-3">
         <label class="form-label">Peso (kg)</label>
@@ -113,4 +127,16 @@
     </div>
   </form>
 </div>
+{% if modo_cola_espera %}
+<script>
+(function(){
+  const el = document.getElementById('fecha_hora_atencion');
+  if (el && !el.value) {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    el.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+})();
+</script>
+{% endif %}
 {% endblock %}

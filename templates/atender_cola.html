@@ -22,6 +22,17 @@
 
   <form method="POST" enctype="multipart/form-data" class="mb-4 p-3 border rounded bg-white" action="{{ url_for('cola_atender_guardar', cola_id=cola_id) }}">
     <h5 class="mb-3">Historia Clínica</h5>
+    {% if modo_cola_espera %}
+    <div class="alert alert-info py-2">
+      Si esta atención corresponde a otro momento, podés indicar la <strong>fecha y hora real</strong> antes de guardar la historia.
+    </div>
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <label class="form-label">Fecha y hora de atención</label>
+        <input type="datetime-local" name="fecha_hora_atencion" id="fecha_hora_atencion" class="form-control">
+      </div>
+    </div>
+    {% endif %}
     <div class="row g-3">
       <div class="col-md-3"><label class="form-label">Peso (kg)</label><input type="number" step="0.01" name="peso_kg" class="form-control"></div>
       <div class="col-md-3"><label class="form-label">Temperatura (°C)</label><input type="number" step="0.1" name="temp_c" class="form-control"></div>
@@ -46,4 +57,16 @@
     </div>
   </form>
 </div>
+{% if modo_cola_espera %}
+<script>
+(function(){
+  const el = document.getElementById('fecha_hora_atencion');
+  if (el && !el.value) {
+    const d = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    el.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+})();
+</script>
+{% endif %}
 {% endblock %}
