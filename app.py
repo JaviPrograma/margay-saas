@@ -833,6 +833,7 @@ def init_db():
     # Campos extra en ANIMALES (intake más completo)
     for alter in [
         "ALTER TABLE animales ADD COLUMN sexo TEXT",
+        "ALTER TABLE animales ADD COLUMN castrado INTEGER",
         "ALTER TABLE animales ADD COLUMN color TEXT",
         "ALTER TABLE animales ADD COLUMN peso_kg REAL",
         "ALTER TABLE animales ADD COLUMN esterilizado INTEGER DEFAULT 0",
@@ -1910,10 +1911,21 @@ def animal_nuevo(cliente_id):
     fecha_nacimiento = request.form.get("fecha_nacimiento", "").strip()
     ultima_desparasitacion = request.form.get("ultima_desparasitacion", "").strip()
     conn = get_db()
-    conn.execute(
-        "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, estado_vida, fecha_fallecimiento, empresa_id) VALUES (?, ?, ?, ?, ?, ?, 'Vivo', NULL, ?)",
-        (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, current_empresa_id()),
-    )
+    if modo_estado_animal_actual():
+        sexo = (request.form.get("sexo") or "").strip()
+        if sexo not in ("Macho", "Hembra"):
+            sexo = None
+        castrado_raw = (request.form.get("castrado") or "").strip()
+        castrado = 1 if castrado_raw == "1" else (0 if castrado_raw == "0" else None)
+        conn.execute(
+            "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, sexo, castrado, estado_vida, fecha_fallecimiento, empresa_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Vivo', NULL, ?)",
+            (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, sexo, castrado, current_empresa_id()),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO animales (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, estado_vida, fecha_fallecimiento, empresa_id) VALUES (?, ?, ?, ?, ?, ?, 'Vivo', NULL, ?)",
+            (cliente_id, nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, current_empresa_id()),
+        )
     conn.commit()
     conn.close()
     return redirect(url_for("animales", cliente_id=cliente_id))
@@ -1934,9 +1946,14 @@ def animal_editar(id):
             fecha_fallecimiento = (request.form.get("fecha_fallecimiento") or "").strip() or None
             if estado_vida == "Vivo":
                 fecha_fallecimiento = None
+            sexo = (request.form.get("sexo") or "").strip()
+            if sexo not in ("Macho", "Hembra"):
+                sexo = None
+            castrado_raw = (request.form.get("castrado") or "").strip()
+            castrado = 1 if castrado_raw == "1" else (0 if castrado_raw == "0" else None)
             conn.execute(
-                "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=?, ultima_desparasitacion=?, estado_vida=?, fecha_fallecimiento=? WHERE id=? AND empresa_id=?",
-                (nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, estado_vida, fecha_fallecimiento, id, current_empresa_id()),
+                "UPDATE animales SET nombre=?, especie=?, raza=?, fecha_nacimiento=?, ultima_desparasitacion=?, sexo=?, castrado=?, estado_vida=?, fecha_fallecimiento=? WHERE id=? AND empresa_id=?",
+                (nombre, especie, raza, fecha_nacimiento, ultima_desparasitacion, sexo, castrado, estado_vida, fecha_fallecimiento, id, current_empresa_id()),
             )
         else:
             conn.execute(
@@ -3011,10 +3028,11 @@ def atender_directo():
     conn = get_db()
     empresa_id = current_empresa_id()
 
-    # Para las dos veterinarias configuradas con sala de espera, el botón Atender
-    # primero registra la llegada y respeta el orden. Las demás conservan el flujo
-    # directo exactamente como estaba.
-    if modo_cola_espera_actual():
+    # Para las dos veterinarias configuradas con sala de espera se mantienen los
+    # DOS flujos: sala de espera por orden de llegada y atención inmediata.
+    # ?modo=directo habilita explícitamente el flujo anterior sin afectar al resto.
+    modo_directo_especial = modo_cola_espera_actual() and request.args.get("modo") == "directo"
+    if modo_cola_espera_actual() and not modo_directo_especial:
         if request.method == "POST":
             respuesta = _registrar_llegada_cola(conn, empresa_id)
             conn.close()
@@ -3038,11 +3056,11 @@ def atender_directo():
         if not seleccion:
             conn.close()
             flash("Revisá cliente, mascota, doctor y motivo antes de atender.", "danger")
-            return redirect(url_for("atender_directo"))
+            return redirect(url_for("atender_directo", modo="directo") if modo_directo_especial else url_for("atender_directo"))
         if int(seleccion["motivo_genera_historia"] or 0) != 1:
             conn.close()
             flash("El motivo elegido no genera historia clínica.", "warning")
-            return redirect(url_for("atender_directo"))
+            return redirect(url_for("atender_directo", modo="directo") if modo_directo_especial else url_for("atender_directo"))
 
         try:
             ahora_local = datetime.now(ZoneInfo(_get_browser_timezone()))
@@ -3062,7 +3080,7 @@ def atender_directo():
             "atender_cita.html",
             cita=cita,
             atencion_directa_nueva=True,
-            form_action=url_for("atender_directo_guardar"),
+            form_action=url_for("atender_directo_guardar", modo="directo") if modo_directo_especial else url_for("atender_directo_guardar"),
         )
 
     clientes_rows = conn.execute(
@@ -3113,6 +3131,7 @@ def atender_directo():
         doctores=doctores,
         motivos=motivos,
         preset=preset,
+        modo_directo_especial=modo_directo_especial,
     )
 
 
@@ -3121,9 +3140,10 @@ def atender_directo():
 def atender_directo_guardar():
     if not modo_atencion_directa_actual():
         abort(403)
-    if modo_cola_espera_actual():
-        flash("Esta veterinaria utiliza la sala de espera. Seleccioná al paciente desde Atender.", "info")
-        return redirect(url_for("atender_directo"))
+    modo_directo_especial = modo_cola_espera_actual() and request.args.get("modo") == "directo"
+    if modo_cola_espera_actual() and not modo_directo_especial:
+        flash("Elegí Sala de espera o Atender en el momento.", "info")
+        return redirect(url_for("atender_directo", modo="directo") if modo_directo_especial else url_for("atender_directo"))
 
     empresa_id = current_empresa_id()
     cliente_id = request.form.get("cliente_id", type=int)
@@ -3141,6 +3161,7 @@ def atender_directo_guardar():
             "atender_directo",
             cliente_id=cliente_id,
             animal_id=animal_id,
+            modo="directo" if modo_directo_especial else None,
         ))
 
     conn = get_db()
@@ -3150,7 +3171,7 @@ def atender_directo_guardar():
     if not seleccion or int(seleccion["motivo_genera_historia"] or 0) != 1:
         conn.close()
         flash("No se pudo validar la atención. No se guardó ningún dato.", "danger")
-        return redirect(url_for("atender_directo"))
+        return redirect(url_for("atender_directo", modo="directo") if modo_directo_especial else url_for("atender_directo"))
 
     try:
         ahora_local = datetime.now(ZoneInfo(_get_browser_timezone()))
