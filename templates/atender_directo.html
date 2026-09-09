@@ -15,7 +15,7 @@
     <div class="alert alert-warning">No hay motivos clínicos cargados. Primero agregá al menos un motivo que genere historia clínica.</div>
   {% endif %}
 
-  <form method="POST" action="{{ url_for('atender_directo') }}" class="card shadow-sm p-3 bg-white">
+  <form method="POST" action="{{ url_for('atender_directo', modo='directo') if modo_directo_especial else url_for('atender_directo') }}" class="card shadow-sm p-3 bg-white">
     <div class="mb-3">
       <label for="cliente_id" class="form-label">Cliente</label>
       <div class="position-relative mb-2">
@@ -76,6 +76,7 @@
 
     <div class="d-flex flex-wrap gap-2">
       <button type="submit" class="btn btn-primary" {{ 'disabled' if not doctores or not motivos else '' }}>🩺 Atender ahora</button>
+      {% if modo_directo_especial %}<a href="{{ url_for('atender_directo') }}" class="btn btn-outline-primary">📋 Ir a sala de espera</a>{% endif %}
       <a href="{{ url_for('clientes') }}" class="btn btn-secondary">Volver a clientes</a>
     </div>
   </form>

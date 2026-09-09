@@ -32,6 +32,27 @@
       <label for="fecha_nacimiento" class="form-label">Fecha de Nacimiento</label>
       <input id="fecha_nacimiento" name="fecha_nacimiento" type="date" class="form-control" value="{{ animal_edit and animal_edit['fecha_nacimiento'] or '' }}">
     </div>
+
+    {% if modo_estado_animal %}
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <label for="sexo" class="form-label">Sexo</label>
+        <select id="sexo" name="sexo" class="form-select">
+          <option value="" {{ 'selected' if not animal_edit or not animal_edit['sexo'] else '' }}>Sin especificar</option>
+          <option value="Macho" {{ 'selected' if animal_edit and animal_edit['sexo'] == 'Macho' else '' }}>Macho</option>
+          <option value="Hembra" {{ 'selected' if animal_edit and animal_edit['sexo'] == 'Hembra' else '' }}>Hembra</option>
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label for="castrado" class="form-label">Castrado/a</label>
+        <select id="castrado" name="castrado" class="form-select">
+          <option value="" {{ 'selected' if not animal_edit or animal_edit['castrado'] is none else '' }}>Sin especificar</option>
+          <option value="1" {{ 'selected' if animal_edit and animal_edit['castrado'] == 1 else '' }}>Sí</option>
+          <option value="0" {{ 'selected' if animal_edit and animal_edit['castrado'] == 0 else '' }}>No</option>
+        </select>
+      </div>
+    </div>
+    {% endif %}
     <div class="mb-3">
       <label for="ultima_desparasitacion" class="form-label">Última desparasitación</label>
       <input id="ultima_desparasitacion" name="ultima_desparasitacion" type="date" class="form-control" value="{{ animal_edit and animal_edit['ultima_desparasitacion'] or '' }}">
@@ -69,7 +90,7 @@
       <th>Raza</th>
       <th>Fecha Nac.</th>
       <th>Últ. desparasitación</th>
-      {% if modo_estado_animal %}<th>Estado</th>{% endif %}
+      {% if modo_estado_animal %}<th>Sexo</th><th>Castrado/a</th><th>Estado</th>{% endif %}
       <th>Acciones</th>
     </tr>
   </thead>
@@ -85,6 +106,8 @@
       <td>{{ animal['fecha_nacimiento'] }}</td>
       <td>{{ animal['ultima_desparasitacion'] or '' }}</td>
       {% if modo_estado_animal %}
+      <td>{{ animal['sexo'] or '—' }}</td>
+      <td>{% if animal['castrado'] == 1 %}Sí{% elif animal['castrado'] == 0 %}No{% else %}—{% endif %}</td>
       <td>
         {% if animal['estado_vida'] == 'Difunto' %}
           <span class="badge bg-secondary">Difunto</span>
@@ -96,7 +119,11 @@
       {% endif %}
       <td>
         {% if modo_atencion_directa and (not modo_estado_animal or animal['estado_vida'] != 'Difunto') %}
-        <a href="{{ url_for('atender_directo', cliente_id=cliente['id'], animal_id=animal['id']) }}" class="btn btn-sm btn-primary">🩺 Atender ahora</a>
+          {% if modo_cola_espera %}
+          <a href="{{ url_for('atender_directo', cliente_id=cliente['id'], animal_id=animal['id'], modo='directo') }}" class="btn btn-sm btn-primary">🩺 Atender ahora</a>
+          {% else %}
+          <a href="{{ url_for('atender_directo', cliente_id=cliente['id'], animal_id=animal['id']) }}" class="btn btn-sm btn-primary">🩺 Atender ahora</a>
+          {% endif %}
         {% endif %}
         <a href="{{ url_for('historia', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-primary">Historia Clínica</a>
         <a href="{{ url_for('vacunas', animal_id=animal['id']) }}" class="btn btn-sm btn-outline-success">Vacunas</a>
@@ -106,7 +133,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="{{ 7 if modo_estado_animal else 6 }}" class="text-center">No hay animales aún.</td></tr>
+    <tr><td colspan="{{ 9 if modo_estado_animal else 6 }}" class="text-center">No hay animales aún.</td></tr>
     {% endfor %}
   </tbody>
 </table>
