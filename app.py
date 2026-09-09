@@ -130,6 +130,20 @@ def modo_estado_animal_actual():
     # Es una bandera independiente para no cambiar la forma de trabajo del resto.
     return bool(session.get('modo_estado_animal', 0))
 
+def _fecha_atencion_desde_form(default_dt):
+    """Permite fecha/hora manual solo en las dos veterinarias con sala de espera especial.
+    Si el campo viene vacío, conserva el comportamiento actual (fecha/hora del momento).
+    """
+    if not modo_cola_espera_actual():
+        return default_dt
+    valor = (request.form.get('fecha_hora_atencion') or '').strip()
+    if not valor:
+        return default_dt
+    try:
+        return datetime.strptime(valor, '%Y-%m-%dT%H:%M')
+    except ValueError:
+        return None
+
 def _validar_modalidad_cobro(metodo_pago):
     metodo_pago = (metodo_pago or '').strip()
     if modo_cobro_especial_actual():
@@ -2867,9 +2881,15 @@ def cola_atender_guardar(cola_id):
         return redirect(url_for("atender_directo"))
 
     ahora_local = _ahora_local_clinica()
-    fecha = ahora_local.strftime("%Y-%m-%d")
-    hora = ahora_local.strftime("%H:%M")
-    fecha_historia = ahora_local.strftime("%Y-%m-%d %H:%M")
+    fecha_atencion = _fecha_atencion_desde_form(ahora_local)
+    if fecha_atencion is None:
+        conn.close()
+        flash("La fecha y hora de atención no tienen un formato válido.", "warning")
+        return redirect(url_for("cola_atender", cola_id=cola_id))
+    fecha = fecha_atencion.strftime("%Y-%m-%d")
+    hora = fecha_atencion.strftime("%H:%M")
+    fecha_historia = fecha_atencion.strftime("%Y-%m-%d %H:%M")
+    # La finalización de la cola sí registra cuándo se guardó realmente en VetCloud.
     finalizado_at = ahora_local.strftime("%Y-%m-%d %H:%M:%S")
     precio_cita = _precio_cita_calculado(conn, q['cliente_id'], q['motivo_id'], fecha, hora, q['lugar'])
     estado_pago = "Pagado" if precio_cita == 0 else "Debe"
@@ -3177,9 +3197,14 @@ def atender_directo_guardar():
         ahora_local = datetime.now(ZoneInfo(_get_browser_timezone()))
     except Exception:
         ahora_local = datetime.now(ZoneInfo("America/Montevideo"))
-    fecha = ahora_local.strftime("%Y-%m-%d")
-    hora = ahora_local.strftime("%H:%M")
-    fecha_historia = ahora_local.strftime("%Y-%m-%d %H:%M")
+    fecha_atencion = _fecha_atencion_desde_form(ahora_local)
+    if fecha_atencion is None:
+        conn.close()
+        flash("La fecha y hora de atención no tienen un formato válido.", "warning")
+        return redirect(url_for("atender_directo", modo="directo") if modo_directo_especial else url_for("atender_directo"))
+    fecha = fecha_atencion.strftime("%Y-%m-%d")
+    hora = fecha_atencion.strftime("%H:%M")
+    fecha_historia = fecha_atencion.strftime("%Y-%m-%d %H:%M")
 
     precio_cita = _precio_cita_calculado(conn, cliente_id, motivo_id, fecha, hora, lugar)
     estado_pago = "Pagado" if precio_cita == 0 else "Debe"
@@ -3518,9 +3543,17 @@ def atender_cita(cita_id):
         particularidades      = (request.form.get("particularidades") or "").strip() or None
         proxima_cita_texto    = (request.form.get("proxima_cita") or "").strip() or None
 
-        ahora = datetime.now().strftime("%Y-%m-%d %H:%M")
+        ahora_dt = datetime.now()
+        fecha_atencion = _fecha_atencion_desde_form(ahora_dt)
+        if fecha_atencion is None:
+            flash("La fecha y hora de atención no tienen un formato válido.", "warning")
+            conn.close()
+            return redirect(url_for("atender_cita", cita_id=cita_id))
+        ahora = fecha_atencion.strftime("%Y-%m-%d %H:%M")
 
-        # Guardar historia (vinculada a doctor y a esta cita)
+        # Guardar historia (vinculada a doctor y a esta cita).
+        # En las dos veterinarias demo la fecha/hora puede corresponder a una atención
+        # realizada antes (por ejemplo, un domicilio cargado al día siguiente).
         cur.execute("""
             INSERT INTO historia_clinica
             (animal_id, fecha, descripcion,
