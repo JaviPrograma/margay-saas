@@ -1,0 +1,20 @@
+PARCHE VETCLOUD - HISTORIA CLINICA ANTERIOR DURANTE LA ATENCION
+
+Solo para acceso.demo@vetcloud.com.uy y acceso.demo2@vetcloud.com.uy (modo sala de espera).
+
+Reemplazar en GitHub:
+- app.py
+- templates/atender_cita.html
+- templates/atender_cola.html
+
+NO reemplazar ninguna base de datos.
+NO modifica clientes, animales, historias existentes, agenda ni facturacion.
+
+Funcion:
+- En Atender en el momento y en Atender desde sala de espera aparece el boton
+  "Ver historia clinica anterior".
+- Abre una ventana modal dentro de la misma pantalla.
+- El formulario de la nueva historia queda abierto debajo y no se pierde lo escrito.
+- El historial es solo lectura.
+- Muestra hasta las 12 atenciones anteriores mas recientes.
+- Las demas veterinarias no ven este boton.
