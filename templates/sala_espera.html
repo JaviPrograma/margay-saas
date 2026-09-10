@@ -125,17 +125,14 @@
                   <a class="btn btn-sm btn-outline-dark" target="_blank" href="{{ url_for('cola_ticket', cola_id=q.id) }}">🖨️ Ticket</a>
                 </div>
                 {% if q.estado == 'Esperando' %}
-                  {% if q.orden_espera == 1 %}
                   <form method="POST" action="{{ url_for('cola_llamar', cola_id=q.id) }}" class="d-flex flex-wrap gap-2 mb-2">
                     <select name="doctor_id" class="form-select form-select-sm" style="max-width:180px;" required>
                       <option value="" selected disabled>Veterinario...</option>
                       {% for d in doctores %}<option value="{{ d.id }}">{{ d.nombre }}</option>{% endfor %}
                     </select>
-                    <button class="btn btn-sm btn-primary" type="submit">📣 Llamar al siguiente</button>
+                    <button class="btn btn-sm btn-primary" type="submit">📣 Llamar / tomar paciente</button>
                   </form>
-                  {% else %}
-                    <div class="small text-muted mb-2">Espera su turno. Primero corresponde el Nº 1.</div>
-                  {% endif %}
+                  
                   <form method="POST" action="{{ url_for('cola_cancelar', cola_id=q.id) }}" onsubmit="return confirm('¿Quitar a este paciente de la sala de espera?');">
                     <button class="btn btn-sm btn-outline-danger" type="submit">Quitar de espera</button>
                   </form>
