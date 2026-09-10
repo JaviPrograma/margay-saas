@@ -2791,28 +2791,6 @@ def cola_llamar(cola_id):
     return redirect(url_for("atender_directo"))
 
 
-def _historial_previo_para_atencion(conn, empresa_id, animal_id, limite=12):
-    """Devuelve historial previo en modo solo lectura para las veterinarias especiales.
-    No modifica datos ni crea registros.
-    """
-    if not modo_cola_espera_actual():
-        return []
-    rows = conn.execute(
-        """
-        SELECT h.id, h.fecha, h.motivo_consulta, h.descripcion,
-               h.diagnostico_presuntivo, h.tratamiento, h.indicaciones,
-               h.particularidades, d.nombre AS doctor_nombre
-          FROM historia_clinica h
-          LEFT JOIN doctores d ON d.id=h.doctor_id AND d.empresa_id=h.empresa_id
-         WHERE h.animal_id=? AND h.empresa_id=?
-         ORDER BY h.fecha DESC, h.id DESC
-         LIMIT ?
-        """,
-        (animal_id, empresa_id, limite),
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
 @app.route("/sala-espera/<int:cola_id>/atender", methods=["GET"])
 @require_auth
 def cola_atender(cola_id):
@@ -2869,9 +2847,8 @@ def cola_atender(cola_id):
         q['inicio_at'] = inicio
     else:
         q = dict(q)
-    historial_previo = _historial_previo_para_atencion(conn, empresa_id, q['animal_id'])
     conn.close()
-    return render_template("atender_cola.html", cita=q, cola_id=cola_id, historial_previo=historial_previo)
+    return render_template("atender_cola.html", cita=q, cola_id=cola_id)
 
 
 @app.route("/sala-espera/<int:cola_id>/guardar", methods=["POST"])
@@ -3118,14 +3095,12 @@ def atender_directo():
             "hora": ahora_local.strftime("%H:%M"),
             "lugar": lugar,
         })
-        historial_previo = _historial_previo_para_atencion(conn, empresa_id, animal_id)
         conn.close()
         return render_template(
             "atender_cita.html",
             cita=cita,
             atencion_directa_nueva=True,
             form_action=url_for("atender_directo_guardar", modo="directo") if modo_directo_especial else url_for("atender_directo_guardar"),
-            historial_previo=historial_previo,
         )
 
     clientes_rows = conn.execute(
@@ -3532,8 +3507,6 @@ def atender_cita(cita_id):
         flash("Cita no encontrada.", "danger")
         return redirect(url_for("agenda_lista"))
 
-    historial_previo = _historial_previo_para_atencion(conn, current_empresa_id(), cita['animal_id'])
-
     motivo_nombre_norm = ((cita["motivo_nombre"] or "").strip()).lower()
     genera_historia = int(cita["motivo_genera_historia"] if cita["motivo_genera_historia"] is not None else 1)
     if "peluquer" in motivo_nombre_norm:
@@ -3551,7 +3524,7 @@ def atender_cita(cita_id):
         if not descripcion:
             flash("La descripción/examen es obligatoria.", "warning")
             conn.close()
-            return render_template("atender_cita.html", cita=cita, historial_previo=historial_previo)
+            return render_template("atender_cita.html", cita=cita)
 
         # Datos de historia
         peso_kg  = _to_float(request.form.get("peso_kg"))
@@ -3628,7 +3601,7 @@ def atender_cita(cita_id):
         return redirect(url_for("historia", animal_id=cita['animal_id']))
 
     conn.close()
-    return render_template("atender_cita.html", cita=cita, historial_previo=historial_previo)
+    return render_template("atender_cita.html", cita=cita)
 
 # -------- WhatsApp Web: abre chat auto y vuelve a la agenda --------
 @app.route("/whatsapp/cita/<int:cita_id>")
@@ -3896,6 +3869,113 @@ def mensualidad_toggle(mensualidad_id):
     conn.close()
     return jsonify({'success': True, 'pagado': (me['pagado'] == 0)})
 
+
+
+@app.route('/mensualidades/cambiar-estado-especial/<int:mensualidad_id>', methods=['POST'])
+@require_auth
+def mensualidad_cambiar_estado_especial(mensualidad_id):
+    """Cambio de estado mediante formulario para las veterinarias con cobro especial.
+
+    Esta ruta existe para la vista general Facturación > Mensualidades y evita
+    depender de JavaScript/fetch. No cambia el comportamiento de las demás
+    veterinarias ni la estructura de la base de datos.
+    """
+    if not modo_cobro_especial_actual():
+        return redirect(url_for('mensualidades'))
+
+    conn = get_db()
+    empresa_id = current_empresa_id_resolved(conn)
+    _sanear_facturacion_empresa(conn, empresa_id)
+    cur = conn.cursor()
+
+    me = cur.execute(
+        "SELECT me.*, cl.cuota_mensual, cl.id AS cid FROM mensualidades me "
+        "JOIN clientes cl ON cl.id=me.cliente_id AND cl.empresa_id=me.empresa_id "
+        "WHERE me.id=? AND me.empresa_id=?",
+        (mensualidad_id, empresa_id),
+    ).fetchone()
+
+    if me is None:
+        conn.close()
+        flash('Mensualidad no encontrada.', 'danger')
+        return redirect(url_for('mensualidades'))
+
+    try:
+        extras = cur.execute(
+            "SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda "
+            "WHERE cobrada_mensualidad_id=? AND empresa_id=?",
+            (mensualidad_id, empresa_id),
+        ).fetchone()['s']
+        monto_cuota = me['monto_cuota'] if me['monto_cuota'] is not None else me['cuota_mensual']
+        total = (monto_cuota or 0) + (extras or 0)
+
+        if me['pagado'] == 0:
+            metodo_pago = (request.form.get('metodo_pago') or '').strip()
+            metodo_pago, error_modalidad = _validar_modalidad_cobro(metodo_pago)
+            if error_modalidad:
+                conn.close()
+                flash(error_modalidad, 'warning')
+                return redirect(url_for(
+                    'mensualidades',
+                    anio=request.form.get('anio') or None,
+                    mes=request.form.get('mes') or None,
+                    buscar=request.form.get('buscar') or None,
+                ))
+
+            fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
+            cur.execute(
+                "UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=?, metodo_pago=? "
+                "WHERE id=? AND empresa_id=?",
+                (fecha_pago, total, metodo_pago or me['metodo_pago'], mensualidad_id, empresa_id),
+            )
+            cur.execute(
+                "UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?",
+                (mensualidad_id, empresa_id),
+            )
+            cur.execute(
+                "INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (mensualidad_id, me['cid'], empresa_id, fecha_pago, total, metodo_pago),
+            )
+            cur.execute(
+                "UPDATE clientes SET modalidad_cobro=? WHERE id=? AND empresa_id=?",
+                (metodo_pago, me['cid'], empresa_id),
+            )
+            flash('Mensualidad marcada como pagada.', 'success')
+        else:
+            cur.execute(
+                "UPDATE mensualidades SET pagado=0, fecha_pago=NULL, monto_pagado=0, metodo_pago=NULL "
+                "WHERE id=? AND empresa_id=?",
+                (mensualidad_id, empresa_id),
+            )
+            cur.execute(
+                "UPDATE mensualidad_pagos SET anulado=1 WHERE mensualidad_id=? AND empresa_id=? AND COALESCE(anulado,0)=0",
+                (mensualidad_id, empresa_id),
+            )
+            cur.execute(
+                "UPDATE agenda SET estado_pago='Debe' WHERE cobrada_mensualidad_id=? AND empresa_id=? AND COALESCE(precio,0) > 0",
+                (mensualidad_id, empresa_id),
+            )
+            flash('Mensualidad marcada como impaga.', 'success')
+
+        _actualizar_flag_deudor(conn, me['cid'])
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        app.logger.exception('Error al cambiar estado de mensualidad especial %s', mensualidad_id)
+        flash('No se pudo cambiar el estado de la mensualidad.', 'danger')
+        return redirect(url_for('mensualidades'))
+
+    conn.close()
+    params = {}
+    if request.form.get('anio'):
+        params['anio'] = request.form.get('anio')
+    if request.form.get('mes'):
+        params['mes'] = request.form.get('mes')
+    if request.form.get('buscar'):
+        params['buscar'] = request.form.get('buscar')
+    return redirect(url_for('mensualidades', **params))
 
 @app.route('/mensualidades/registrar_pago/<int:cliente_id>', methods=['POST'])
 @require_auth
