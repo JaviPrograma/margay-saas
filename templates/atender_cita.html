@@ -24,6 +24,52 @@
     </div>
   </div>
 
+
+  {% if modo_cola_espera %}
+  <div class="mb-3 d-flex align-items-center gap-2 flex-wrap">
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#historialPrevioModal">
+      Ver historia clínica anterior
+    </button>
+    <span class="text-muted small">Se abre acá mismo y no perdés lo que estés escribiendo.</span>
+  </div>
+
+  <div class="modal fade" id="historialPrevioModal" tabindex="-1" aria-labelledby="historialPrevioLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="historialPrevioLabel">Historia clínica anterior de {{ cita.animal_nombre }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+        </div>
+        <div class="modal-body">
+          {% if historial_previo %}
+            {% for h in historial_previo %}
+            <div class="card mb-3">
+              <div class="card-header d-flex justify-content-between flex-wrap gap-2">
+                <strong>{{ h.fecha }}</strong>
+                <span>{% if h.doctor_nombre %}Atendido por: {{ h.doctor_nombre }}{% endif %}</span>
+              </div>
+              <div class="card-body">
+                {% if h.motivo_consulta %}<p><strong>Motivo:</strong> {{ h.motivo_consulta }}</p>{% endif %}
+                {% if h.descripcion %}<p><strong>Examen / Descripción:</strong><br>{{ h.descripcion }}</p>{% endif %}
+                {% if h.diagnostico_presuntivo %}<p><strong>Diagnóstico:</strong><br>{{ h.diagnostico_presuntivo }}</p>{% endif %}
+                {% if h.tratamiento %}<p><strong>Tratamiento:</strong><br>{{ h.tratamiento }}</p>{% endif %}
+                {% if h.indicaciones %}<p><strong>Indicaciones:</strong><br>{{ h.indicaciones }}</p>{% endif %}
+                {% if h.particularidades %}<p class="mb-0"><strong>Particularidades:</strong><br>{{ h.particularidades }}</p>{% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          {% else %}
+            <div class="alert alert-secondary mb-0">Este paciente todavía no tiene historias clínicas anteriores registradas.</div>
+          {% endif %}
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar y seguir atendiendo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <form method="POST" enctype="multipart/form-data" class="mb-4 p-3 border rounded bg-white"{% if form_action %} action="{{ form_action }}"{% endif %}>
     {% if atencion_directa_nueva %}
       <input type="hidden" name="cliente_id" value="{{ cita.cliente_id }}">
