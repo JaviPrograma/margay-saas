@@ -2757,20 +2757,9 @@ def cola_llamar(cola_id):
         flash("Seleccioná el veterinario que va a llamar al paciente.", "warning")
         return redirect(url_for("atender_directo"))
 
-    # Respetar estrictamente el orden de llegada entre quienes siguen esperando.
-    primero = conn.execute(
-        """
-        SELECT id FROM cola_espera
-         WHERE empresa_id=? AND estado='Esperando'
-         ORDER BY ingreso_at ASC, id ASC
-         LIMIT 1
-        """,
-        (empresa_id,),
-    ).fetchone()
-    if not primero or int(primero['id']) != int(cola_id):
-        conn.close()
-        flash("Hay otro paciente esperando desde antes. Primero corresponde llamar al que está Nº 1.", "warning")
-        return redirect(url_for("atender_directo"))
+    # Para estas veterinarias la posición en la cola es informativa: cualquier consultorio
+    # puede tomar a cualquier paciente que siga en espera. La actualización atómica de abajo
+    # evita que dos consultorios tomen al mismo paciente al mismo tiempo.
 
     ahora = _ahora_local_clinica().strftime("%Y-%m-%d %H:%M:%S")
     cur = conn.execute(
@@ -3869,113 +3858,6 @@ def mensualidad_toggle(mensualidad_id):
     conn.close()
     return jsonify({'success': True, 'pagado': (me['pagado'] == 0)})
 
-
-
-@app.route('/mensualidades/cambiar-estado-especial/<int:mensualidad_id>', methods=['POST'])
-@require_auth
-def mensualidad_cambiar_estado_especial(mensualidad_id):
-    """Cambio de estado mediante formulario para las veterinarias con cobro especial.
-
-    Esta ruta existe para la vista general Facturación > Mensualidades y evita
-    depender de JavaScript/fetch. No cambia el comportamiento de las demás
-    veterinarias ni la estructura de la base de datos.
-    """
-    if not modo_cobro_especial_actual():
-        return redirect(url_for('mensualidades'))
-
-    conn = get_db()
-    empresa_id = current_empresa_id_resolved(conn)
-    _sanear_facturacion_empresa(conn, empresa_id)
-    cur = conn.cursor()
-
-    me = cur.execute(
-        "SELECT me.*, cl.cuota_mensual, cl.id AS cid FROM mensualidades me "
-        "JOIN clientes cl ON cl.id=me.cliente_id AND cl.empresa_id=me.empresa_id "
-        "WHERE me.id=? AND me.empresa_id=?",
-        (mensualidad_id, empresa_id),
-    ).fetchone()
-
-    if me is None:
-        conn.close()
-        flash('Mensualidad no encontrada.', 'danger')
-        return redirect(url_for('mensualidades'))
-
-    try:
-        extras = cur.execute(
-            "SELECT COALESCE(SUM(COALESCE(precio,0)),0) s FROM agenda "
-            "WHERE cobrada_mensualidad_id=? AND empresa_id=?",
-            (mensualidad_id, empresa_id),
-        ).fetchone()['s']
-        monto_cuota = me['monto_cuota'] if me['monto_cuota'] is not None else me['cuota_mensual']
-        total = (monto_cuota or 0) + (extras or 0)
-
-        if me['pagado'] == 0:
-            metodo_pago = (request.form.get('metodo_pago') or '').strip()
-            metodo_pago, error_modalidad = _validar_modalidad_cobro(metodo_pago)
-            if error_modalidad:
-                conn.close()
-                flash(error_modalidad, 'warning')
-                return redirect(url_for(
-                    'mensualidades',
-                    anio=request.form.get('anio') or None,
-                    mes=request.form.get('mes') or None,
-                    buscar=request.form.get('buscar') or None,
-                ))
-
-            fecha_pago = datetime.now().strftime('%Y-%m-%d %H:%M')
-            cur.execute(
-                "UPDATE mensualidades SET pagado=1, fecha_pago=?, monto_pagado=?, metodo_pago=? "
-                "WHERE id=? AND empresa_id=?",
-                (fecha_pago, total, metodo_pago or me['metodo_pago'], mensualidad_id, empresa_id),
-            )
-            cur.execute(
-                "UPDATE agenda SET estado_pago='Pagado' WHERE cobrada_mensualidad_id=? AND empresa_id=?",
-                (mensualidad_id, empresa_id),
-            )
-            cur.execute(
-                "INSERT INTO mensualidad_pagos (mensualidad_id, cliente_id, empresa_id, fecha_pago, monto, metodo_pago) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (mensualidad_id, me['cid'], empresa_id, fecha_pago, total, metodo_pago),
-            )
-            cur.execute(
-                "UPDATE clientes SET modalidad_cobro=? WHERE id=? AND empresa_id=?",
-                (metodo_pago, me['cid'], empresa_id),
-            )
-            flash('Mensualidad marcada como pagada.', 'success')
-        else:
-            cur.execute(
-                "UPDATE mensualidades SET pagado=0, fecha_pago=NULL, monto_pagado=0, metodo_pago=NULL "
-                "WHERE id=? AND empresa_id=?",
-                (mensualidad_id, empresa_id),
-            )
-            cur.execute(
-                "UPDATE mensualidad_pagos SET anulado=1 WHERE mensualidad_id=? AND empresa_id=? AND COALESCE(anulado,0)=0",
-                (mensualidad_id, empresa_id),
-            )
-            cur.execute(
-                "UPDATE agenda SET estado_pago='Debe' WHERE cobrada_mensualidad_id=? AND empresa_id=? AND COALESCE(precio,0) > 0",
-                (mensualidad_id, empresa_id),
-            )
-            flash('Mensualidad marcada como impaga.', 'success')
-
-        _actualizar_flag_deudor(conn, me['cid'])
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        conn.close()
-        app.logger.exception('Error al cambiar estado de mensualidad especial %s', mensualidad_id)
-        flash('No se pudo cambiar el estado de la mensualidad.', 'danger')
-        return redirect(url_for('mensualidades'))
-
-    conn.close()
-    params = {}
-    if request.form.get('anio'):
-        params['anio'] = request.form.get('anio')
-    if request.form.get('mes'):
-        params['mes'] = request.form.get('mes')
-    if request.form.get('buscar'):
-        params['buscar'] = request.form.get('buscar')
-    return redirect(url_for('mensualidades', **params))
 
 @app.route('/mensualidades/registrar_pago/<int:cliente_id>', methods=['POST'])
 @require_auth
