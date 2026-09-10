@@ -94,7 +94,20 @@
           </td>
           {% endif %}
           <td class="d-flex flex-wrap gap-1">
-            <button class="btn btn-sm btn-outline-primary" onclick="togglePago({{ r['mensualidad_id'] }}, {{ 'true' if r['pagado'] else 'false' }})">Cambiar estado</button>
+            {% if modo_cobro_especial %}
+            <form method="POST" action="{{ url_for('mensualidad_cambiar_estado_especial', mensualidad_id=r['mensualidad_id']) }}" class="d-inline m-0">
+              <input type="hidden" name="anio" value="{{ anio }}">
+              <input type="hidden" name="mes" value="{{ mes }}">
+              <input type="hidden" name="buscar" value="{{ buscar or '' }}">
+              {% if not r['pagado'] %}
+              <input type="hidden" name="metodo_pago" id="metodo-hidden-{{ r['mensualidad_id'] }}" value="{{ (r['modalidad_cobro'] or '') }}">
+              {% endif %}
+              <button type="submit" class="btn btn-sm btn-outline-primary"
+                {% if not r['pagado'] %}onclick="var s=document.getElementById('metodo-{{ r['mensualidad_id'] }}'); var h=document.getElementById('metodo-hidden-{{ r['mensualidad_id'] }}'); if(s&&h){h.value=s.value;} if(!h.value){alert('Seleccioná la modalidad de cobro.'); return false;}"{% endif %}>Cambiar estado</button>
+            </form>
+            {% else %}
+            <button type="button" class="btn btn-sm btn-outline-primary" onclick="togglePago({{ r['mensualidad_id'] }}, {{ 'true' if r['pagado'] else 'false' }})">Cambiar estado</button>
+            {% endif %}
             <a class="btn btn-sm btn-secondary" href="{{ url_for('mensualidad_gestionar', mensualidad_id=r['mensualidad_id']) }}">Gestionar</a>
           </td>
         </tr>
