@@ -2780,6 +2780,28 @@ def cola_llamar(cola_id):
     return redirect(url_for("atender_directo"))
 
 
+def _historial_previo_para_atencion(conn, empresa_id, animal_id, limite=12):
+    """Devuelve historial previo en modo solo lectura para las veterinarias especiales.
+    No modifica datos ni crea registros.
+    """
+    if not modo_cola_espera_actual():
+        return []
+    rows = conn.execute(
+        """
+        SELECT h.id, h.fecha, h.motivo_consulta, h.descripcion,
+               h.diagnostico_presuntivo, h.tratamiento, h.indicaciones,
+               h.particularidades, d.nombre AS doctor_nombre
+          FROM historia_clinica h
+          LEFT JOIN doctores d ON d.id=h.doctor_id AND d.empresa_id=h.empresa_id
+         WHERE h.animal_id=? AND h.empresa_id=?
+         ORDER BY h.fecha DESC, h.id DESC
+         LIMIT ?
+        """,
+        (animal_id, empresa_id, limite),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 @app.route("/sala-espera/<int:cola_id>/atender", methods=["GET"])
 @require_auth
 def cola_atender(cola_id):
@@ -2836,8 +2858,9 @@ def cola_atender(cola_id):
         q['inicio_at'] = inicio
     else:
         q = dict(q)
+    historial_previo = _historial_previo_para_atencion(conn, empresa_id, q['animal_id'])
     conn.close()
-    return render_template("atender_cola.html", cita=q, cola_id=cola_id)
+    return render_template("atender_cola.html", cita=q, cola_id=cola_id, historial_previo=historial_previo)
 
 
 @app.route("/sala-espera/<int:cola_id>/guardar", methods=["POST"])
@@ -3084,12 +3107,14 @@ def atender_directo():
             "hora": ahora_local.strftime("%H:%M"),
             "lugar": lugar,
         })
+        historial_previo = _historial_previo_para_atencion(conn, empresa_id, animal_id)
         conn.close()
         return render_template(
             "atender_cita.html",
             cita=cita,
             atencion_directa_nueva=True,
             form_action=url_for("atender_directo_guardar", modo="directo") if modo_directo_especial else url_for("atender_directo_guardar"),
+            historial_previo=historial_previo,
         )
 
     clientes_rows = conn.execute(
@@ -3496,6 +3521,8 @@ def atender_cita(cita_id):
         flash("Cita no encontrada.", "danger")
         return redirect(url_for("agenda_lista"))
 
+    historial_previo = _historial_previo_para_atencion(conn, current_empresa_id(), cita['animal_id'])
+
     motivo_nombre_norm = ((cita["motivo_nombre"] or "").strip()).lower()
     genera_historia = int(cita["motivo_genera_historia"] if cita["motivo_genera_historia"] is not None else 1)
     if "peluquer" in motivo_nombre_norm:
@@ -3513,7 +3540,7 @@ def atender_cita(cita_id):
         if not descripcion:
             flash("La descripción/examen es obligatoria.", "warning")
             conn.close()
-            return render_template("atender_cita.html", cita=cita)
+            return render_template("atender_cita.html", cita=cita, historial_previo=historial_previo)
 
         # Datos de historia
         peso_kg  = _to_float(request.form.get("peso_kg"))
@@ -3590,7 +3617,7 @@ def atender_cita(cita_id):
         return redirect(url_for("historia", animal_id=cita['animal_id']))
 
     conn.close()
-    return render_template("atender_cita.html", cita=cita)
+    return render_template("atender_cita.html", cita=cita, historial_previo=historial_previo)
 
 # -------- WhatsApp Web: abre chat auto y vuelve a la agenda --------
 @app.route("/whatsapp/cita/<int:cita_id>")
